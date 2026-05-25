@@ -215,6 +215,13 @@ This lets a private-chat agent inspect the workgroup, dispatch a task into it,
 and wait briefly for a direct answer without merging private-chat and workgroup
 state.
 
+The private-chat connector and the in-group agents are separate runtime
+instances that meet only through the shared message log; they do not share
+memory or state. If the connector posts with the same `sender_id` as an
+in-group agent, the two collapse into one group identity and the log cannot tell
+them apart. Give the bridge its own distinct `sender_id` so the private-chat
+instance and any in-group agent stay separate in the log and in routing.
+
 ## Watchdogs And Heartbeats
 
 The original deployment adds operational scripts around the core API. They are
