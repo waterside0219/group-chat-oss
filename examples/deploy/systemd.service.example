@@ -1,0 +1,13 @@
+[Unit]
+Description=groupchat-oss server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/group-chat-oss
+Environment=GROUPCHAT_AUTH_TOKEN=change-me
+ExecStart=/usr/bin/env python3 -m groupchat.server --config config.example.toml
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

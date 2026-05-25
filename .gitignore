@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+config.toml
+*.local.toml
+.env
+*.secret
+data/
+*.jsonl

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+export GROUPCHAT_AUTH_TOKEN="${GROUPCHAT_AUTH_TOKEN:-change-me}"
+exec python3 -m groupchat.server --config config.example.toml

@@ -1,0 +1,38 @@
+[[members]]
+id = "you"
+display_name = "You"
+kind = "human"
+avatar = "Y"
+color = "neutral"
+can_reply = false
+aliases = ["you", "me", "user"]
+
+[[members]]
+id = "assistant-a"
+display_name = "Assistant A"
+kind = "agent"
+avatar = "A"
+color = "orange"
+model = "local-agent"
+tmux = ""
+webhook_url = ""
+webhook_status_url = ""
+can_reply = true
+default_responder = true
+aliases = ["assistant-a", "a", "assistant"]
+
+[[members]]
+id = "assistant-b"
+display_name = "Assistant B"
+kind = "agent"
+avatar = "B"
+color = "blue"
+model = "local-agent"
+tmux = ""
+webhook_url = ""
+webhook_status_url = ""
+can_reply = true
+aliases = ["assistant-b", "b"]
+
+[mentions]
+all = ["all", "__all__", "everyone", "team"]

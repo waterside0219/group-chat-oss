@@ -1,0 +1,24 @@
+[server]
+host = "127.0.0.1"
+port = 8795
+strict_auth = true
+
+[auth]
+# Prefer GROUPCHAT_AUTH_TOKEN in production. token_file is convenient for local curl/CLI.
+token = "change-me"
+token_file = "~/.groupchat/token"
+
+[storage]
+jsonl_path = "./data/group_chat.jsonl"
+state_path = "./data/group_state.json"
+
+[group]
+roster_path = "./roster.example.toml"
+admin_sender_id = "you"
+
+[adapters]
+# Stage one defaults. Set both to "tmux" after installing tmux and filling member tmux sessions.
+dispatcher = "null"
+presence = "offline"
+# Recommended agent integration: set dispatcher = "webhook" and fill member webhook_url values.
+# webhook_timeout = 5

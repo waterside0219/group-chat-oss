@@ -1,0 +1,20 @@
+[server]
+host = "127.0.0.1"
+port = 8895
+strict_auth = true
+
+[auth]
+token = "test-token"
+token_file = ""
+
+[storage]
+jsonl_path = "./data/test_group_chat.jsonl"
+state_path = "./data/test_group_state.json"
+
+[group]
+roster_path = "./roster.example.toml"
+admin_sender_id = "you"
+
+[adapters]
+dispatcher = "null"
+presence = "offline"
