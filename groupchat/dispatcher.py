@@ -7,10 +7,13 @@ from typing import Protocol
 @dataclass(frozen=True)
 class DispatchRequest:
     source: str
+    route: str
+    room_id: str
     sender_id: str
     text: str
     message_id: str
     parent_msg_id: str
+    turn_id: str
     mentions: list[str]
     targets: list[str]
     context: str

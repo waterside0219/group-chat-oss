@@ -79,7 +79,7 @@ class TmuxDispatcher:
         sender_name = self.agent_names.get(request.sender_id, request.sender_id)
         mention_names = [self.agent_names.get(m, m) for m in request.mentions]
         header = (
-            f"[WORKGROUP msg_id={request.message_id} "
+            f"[WORKGROUP route={request.route} room={request.room_id} msg_id={request.message_id} "
             f"from={request.sender_id}({sender_name}) "
             f"hop={request.hop_count} remaining_handoffs={remaining_hops}]"
         )
@@ -90,6 +90,8 @@ class TmuxDispatcher:
                 "[workgroup_protocol]",
                 "You are in a local workgroup chat, not a private chat.",
                 "Read the local context file before replying.",
+                "Visible workgroup replies must use the configured group reply API.",
+                "A group reply payload should include route, room_id, agent_id, parent_msg_id, text, and turn_id when available.",
                 "Only mention another agent when handing off or asking for review.",
                 "Do not fan out to everyone unless the system explicitly supports it.",
                 "If remaining_handoffs is 0, summarize for the human instead of handing off.",
@@ -114,7 +116,11 @@ class TmuxDispatcher:
                 "# Workgroup Context",
                 "",
                 f"- message_id: {request.message_id}",
+                f"- route: {request.route}",
+                f"- room_id: {request.room_id}",
                 f"- sender: {request.sender_id}",
+                f"- parent_msg_id: {request.parent_msg_id or '(none)'}",
+                f"- turn_id: {request.turn_id or '(none)'}",
                 f"- mentions: {','.join(request.mentions) if request.mentions else '(none)'}",
                 f"- hop_count: {request.hop_count}",
                 f"- remaining_handoffs: {remaining_hops}",
@@ -137,6 +143,9 @@ class TmuxDispatcher:
             "agent_id": agent_id,
             "session": session,
             "message_id": request.message_id,
+            "route": request.route,
+            "room_id": request.room_id,
+            "turn_id": request.turn_id,
             "sender": request.sender_id,
             "mentions": request.mentions,
             "text": request.text,

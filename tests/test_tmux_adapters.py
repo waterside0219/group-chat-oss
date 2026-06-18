@@ -19,10 +19,13 @@ class TmuxAdapterTests(unittest.TestCase):
             )
             req = DispatchRequest(
                 source="group",
+                route="group",
+                room_id="main",
                 sender_id="you",
                 text="hello",
                 message_id="msg-1",
                 parent_msg_id="",
+                turn_id="turn-1",
                 mentions=["assistant-a"],
                 targets=["assistant-a"],
                 context="[12:00] You: hello",

@@ -132,6 +132,8 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_send(body)
         elif route == "/group/append":
             self._handle_group_append(body)
+        elif route in {"/group/reply", "/mcp/seashore/group-reply"}:
+            self._handle_group_reply(body)
         elif route == "/group/dispatch-state":
             self._handle_group_dispatch_state(body)
         elif route == "/group/typing":
@@ -189,29 +191,33 @@ class GroupChatHandler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, **self.state.group_chat.status_snapshot(self._session_exists)})
 
     def _handle_group_tasks(self):
-        self._send_json(200, {"ok": True, **self.state.group_chat.tasks_summary()})
+        qs = self._query()
+        room_id = self._query_value(qs, "room_id")
+        self._send_json(200, {"ok": True, **self.state.group_chat.tasks_summary(room_id=room_id)})
 
     def _handle_group_history(self):
         qs = self._query()
         since = self._query_value(qs, "since")
         before = self._query_value(qs, "before") or self._query_value(qs, "before_ts")
+        room_id = self._query_value(qs, "room_id")
         try:
             limit = int(self._query_value(qs, "limit", "100") or "100")
         except Exception:
             limit = 100
         limit = min(max(limit, 1), 1000)
-        records = self.state.group_chat.read_since(since_ts=since, before_ts=before, limit=limit)
+        records = self.state.group_chat.read_since(since_ts=since, before_ts=before, limit=limit, room_id=room_id)
         self._send_json(200, {"ok": True, "records": records, "count": len(records)})
 
     def _handle_group_poll(self):
         qs = self._query()
         since = self._query_value(qs, "since")
+        room_id = self._query_value(qs, "room_id")
         try:
             limit = int(self._query_value(qs, "limit", "100") or "100")
         except Exception:
             limit = 100
         limit = min(max(limit, 1), 500)
-        records = self.state.group_chat.read_since(since_ts=since, limit=limit)
+        records = self.state.group_chat.read_since(since_ts=since, limit=limit, room_id=room_id)
         self._send_json(
             200,
             {
@@ -262,6 +268,9 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             return
 
         hop_count = int(body.get("hop_count", 0) or 0)
+        route = str(body.get("route") or "group").strip() or "group"
+        room_id = str(body.get("room_id") or "main").strip() or "main"
+        turn_id = str(body.get("turn_id") or "").strip() or None
         mentions = self.state.group_chat.normalize_mentions(body.get("mentions"), text)
         parent_msg_id = body.get("parent_msg_id")
         if sender_id in self.state.group_chat.human_ids() and parent_msg_id and not mentions:
@@ -286,27 +295,32 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             meta["client_msg_id"] = client_msg_id
         message_type = str(body.get("message_type") or "chat").strip().lower()
         owner = str(body.get("owner") or "").strip() or self._infer_group_task_owner(body, mentions)
+        priority = str(body.get("priority") or "").strip() or None
         try:
             rec = self.state.group_chat.append(
                 sender_id,
                 text,
                 source=str(body.get("source") or "api"),
+                route=route,
+                room_id=room_id,
                 mentions=mentions,
                 parent_msg_id=parent_msg_id or None,
                 reply_to=body.get("reply_to") or None,
                 delivery=delivery,
                 meta=meta,
+                turn_id=turn_id,
                 message_type=message_type,
                 task_id=str(body.get("task_id") or "").strip() or None,
                 parent_task_id=str(body.get("parent_task_id") or "").strip() or None,
                 owner=owner,
+                priority=priority,
             )
         except ValueError as e:
             self._send_json(400, {"error": str(e)})
             return
 
         if targets:
-            self._dispatch(sender_id, text, rec["id"], str(parent_msg_id or ""), mentions, targets, hop_count, dispatch_id)
+            self._dispatch(sender_id, text, rec["id"], str(parent_msg_id or ""), turn_id or "", mentions, targets, hop_count, dispatch_id, route=route, room_id=room_id)
         self._send_json(200, {"ok": True, "record": rec, "targets": targets})
 
     def _handle_group_append(self, body: dict[str, Any]):
@@ -323,8 +337,12 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             return
 
         mentions = self.state.group_chat.normalize_mentions(body.get("mentions"), text)
+        route = str(body.get("route") or "group").strip() or "group"
+        room_id = str(body.get("room_id") or "main").strip() or "main"
+        turn_id = str(body.get("turn_id") or "").strip() or None
         message_type = str(body.get("message_type") or "chat").strip().lower()
         owner = str(body.get("owner") or "").strip() or self._infer_group_task_owner(body, mentions)
+        priority = str(body.get("priority") or "").strip() or None
         hop_count = int(body.get("hop_count", 0) or 0)
         targets = self.state.group_chat.targets_for(sender_id, mentions, self._group_online_agents(), hop_count=hop_count)
         try:
@@ -332,15 +350,21 @@ class GroupChatHandler(BaseHTTPRequestHandler):
                 sender_id,
                 text,
                 source=str(body.get("source") or f"agent:{sender_id}"),
+                route=route,
+                room_id=room_id,
                 mentions=mentions,
                 parent_msg_id=body.get("parent_msg_id") or None,
                 reply_to=body.get("reply_to") or None,
                 delivery={"targets": targets, "delivered": [], "failed": []},
                 meta={"loop_depth": hop_count},
+                turn_id=turn_id,
+                bubble_index=self._optional_int(body.get("bubble_index")),
+                bubble_count=self._optional_int(body.get("bubble_count")),
                 message_type=message_type,
                 task_id=str(body.get("task_id") or "").strip() or None,
                 parent_task_id=str(body.get("parent_task_id") or "").strip() or None,
                 owner=owner,
+                priority=priority,
             )
         except ValueError as e:
             self._send_json(400, {"error": str(e)})
@@ -348,8 +372,48 @@ class GroupChatHandler(BaseHTTPRequestHandler):
         self.state.group_chat.set_typing(sender_id, False)
         if targets:
             dispatch_id = f"dsp_{int(time.time() * 1000)}"
-            self._dispatch(sender_id, text, rec["id"], str(body.get("parent_msg_id") or ""), mentions, targets, hop_count, dispatch_id)
+            self._dispatch(sender_id, text, rec["id"], str(body.get("parent_msg_id") or ""), turn_id or "", mentions, targets, hop_count, dispatch_id, route=route, room_id=room_id)
         self._send_json(200, {"ok": True, "record": rec, "targets": targets})
+
+    def _handle_group_reply(self, body: dict[str, Any]):
+        route = str(body.get("route") or "group").strip()
+        room_id = str(body.get("room_id") or "").strip()
+        agent_id = str(body.get("agent_id") or body.get("sender_id") or "").strip()
+        parent_msg_id = str(body.get("parent_msg_id") or "").strip()
+        turn_id = str(body.get("turn_id") or "").strip()
+        text = str(body.get("text") or "").strip()
+        if route != "group":
+            self._send_json(400, {"ok": False, "error": "route must be group"})
+            return
+        missing = [name for name, value in {
+            "room_id": room_id,
+            "agent_id": agent_id,
+            "parent_msg_id": parent_msg_id,
+            "turn_id": turn_id,
+            "text": text,
+        }.items() if not value]
+        if missing:
+            self._send_json(400, {"ok": False, "error": f"missing required field(s): {', '.join(missing)}"})
+            return
+        payload = dict(body)
+        payload.update({
+            "sender_id": agent_id,
+            "route": route,
+            "room_id": room_id,
+            "parent_msg_id": parent_msg_id,
+            "turn_id": turn_id,
+            "text": text,
+            "source": body.get("source") or f"group-reply:{agent_id}",
+        })
+        self._handle_group_append(payload)
+
+    def _optional_int(self, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
 
     def _dispatch(
         self,
@@ -357,21 +421,28 @@ class GroupChatHandler(BaseHTTPRequestHandler):
         text: str,
         message_id: str,
         parent_msg_id: str,
+        turn_id: str,
         mentions: list[str],
         targets: list[str],
         hop_count: int,
         dispatch_id: str,
+        *,
+        route: str = "group",
+        room_id: str = "main",
     ):
-        context = "\n".join(self.state.group_chat.context_lines(limit=20))
+        context = "\n".join(self.state.group_chat.context_lines(limit=20, room_id=room_id))
         for agent_id in targets:
             self.state.group_chat.set_typing(agent_id, True, dispatch_id=dispatch_id)
         delivered, failed = self.state.dispatcher.dispatch(
             DispatchRequest(
                 source="group",
+                route=route,
+                room_id=room_id,
                 sender_id=sender_id,
                 text=text,
                 message_id=message_id,
                 parent_msg_id=parent_msg_id,
+                turn_id=turn_id,
                 mentions=mentions,
                 targets=targets,
                 context=context,

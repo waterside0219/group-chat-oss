@@ -69,9 +69,12 @@ class WebhookDispatcher:
             "target_agent_id": agent_id,
             "message": {
                 "id": request.message_id,
+                "route": request.route,
+                "room_id": request.room_id,
                 "sender_id": request.sender_id,
                 "text": request.text,
                 "parent_msg_id": request.parent_msg_id or None,
+                "turn_id": request.turn_id or None,
                 "mentions": request.mentions,
                 "source": request.source,
             },

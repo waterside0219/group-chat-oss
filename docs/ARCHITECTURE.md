@@ -28,14 +28,16 @@ launchd, or private deployment paths.
 
 The normal flow is:
 
-1. A client posts a message to `POST /group/send`.
+1. A client posts a message to `POST /group/send`, usually with
+   `route = "group"` and a `room_id` such as `main`, `work`, or `code`.
 2. The server writes a JSONL record through `GroupChatStore.append()`.
 3. The server normalizes explicit mentions from the `mentions` field and from
    `@name` text.
 4. `targets_for()` chooses agent targets.
 5. The server marks targeted agents as typing and calls the configured
    dispatcher.
-6. Agents reply by posting `POST /group/append`.
+6. Agents reply by posting `POST /group/reply` when they are responding to a
+   bridged turn, or `POST /group/append` for the lower-level append API.
 7. Clients read the shared log with `GET /group/poll` or `GET /group/history`.
 
 Agent-to-agent routing is guarded. Humans can default to the configured default
@@ -59,6 +61,8 @@ system:
 - `GET /group/stats`
 - `POST /group/send`
 - `POST /group/append`
+- `POST /group/reply`
+- `POST /mcp/seashore/group-reply`
 - `POST /group/dispatch-state`
 - `POST /group/typing`
 - `POST /group/delete`
@@ -71,14 +75,15 @@ system:
 
 Messages are appended as JSON Lines. Each record includes:
 
-- `id`, `ts`, `conversation_id`
+- `id`, `ts`, `conversation_id`, `route`, `room_id`
 - `sender_id`, `sender_model`
 - `text`, `mentions`, `parent_msg_id`, `reply_to`
+- `turn_id`, `bubble_index`, `bubble_count`
 - `source`
 - `delivery`
 - `meta`
 - `message_type`
-- `task_id`, `parent_task_id`, `owner`
+- `task_id`, `parent_task_id`, `owner`, `priority`
 
 The state file stores per-agent runtime state:
 
@@ -99,15 +104,61 @@ database table.
 `message_type` of `progress`, `ship`, or `block` update the status of the task
 identified by `parent_task_id`.
 
+Tasks may carry `priority = "p0" | "p1" | "p2"`.
+
+- `p0`: urgent, blocking, or user-visible breakage that needs same-session
+  action.
+- `p1`: important planned work that should be handled next.
+- `p2`: backlog, cleanup, documentation, or nice-to-have work.
+
+New task messages default to `p1` when priority is omitted. Follow-up task events
+can repeat the priority when a blocker or progress update needs to keep the
+task visible in the same priority bucket. Invalid priorities are rejected instead
+of being silently normalized.
+
 `GET /group/tasks` returns:
 
-- `tasks`: task records sorted by `updated_at`
+- `tasks`: task records sorted by priority first, then done/open state and update
+  time
 - `counts_by_owner`: open/in-progress/done/blocked counts per agent owner
+- `counts_by_priority`: p0/p1/p2/none/total task counts
 - `events`: task-related message events
 
 The server infers `owner` from an explicit `owner`, `assignee`, or
 `assigned_to` field. If those are absent, the first mentioned reply-capable agent
 becomes the owner.
+
+## Rooms And Reply Contracts
+
+`room_id` lets one server host several shared timelines without forcing every
+client to run a separate process. A deployment can keep:
+
+- `work`: high-signal workgroup room for task assignment, decisions, incidents,
+  progress, blocks, and ship notes.
+- `casual`: loose chat room for social context and low-pressure conversation.
+- `code`: code review and implementation room for patches, tests, migrations,
+  and API contract discussion.
+
+All rooms live in the same JSONL log, but clients poll one room at a time with
+`GET /group/history?room_id=code` or `GET /group/poll?room_id=work`.
+
+The explicit reply contract is designed for channel bridges and MCP-style tools
+that need deterministic delivery. `POST /group/reply` requires:
+
+- `route = "group"`
+- `room_id`
+- `agent_id`
+- `parent_msg_id`
+- `turn_id`
+- `text`
+
+The endpoint stores the reply as a normal group record with
+`sender_id = agent_id`. Optional `bubble_index` and `bubble_count` support
+multi-bubble replies while preserving the same parent and turn id.
+
+`POST /mcp/seashore/group-reply` is a compatibility alias for deployments that
+already expose a local MCP route with that path. It does not add Seashore-specific
+storage requirements; it maps into the same neutral group record shape.
 
 ## Dispatcher Options
 
@@ -146,9 +197,12 @@ For each target agent with `webhook_url`, it POSTs a structured payload:
   "target_agent_id": "assistant-a",
   "message": {
     "id": "grp_...",
+    "route": "group",
+    "room_id": "main",
     "sender_id": "you",
     "text": "hello",
     "parent_msg_id": null,
+    "turn_id": "turn_...",
     "mentions": ["assistant-a"],
     "source": "api"
   },
@@ -318,6 +372,11 @@ that should be portable:
 - Reply/quote from a human to an agent message can infer the parent sender as
   the target.
 - `message_type` drives the task-board state machine.
+- `priority = p0/p1/p2` drives task-board ordering and priority counts.
+- `room_id` keeps work, casual, and code timelines separate in the same server.
+- `/group/reply` and `/mcp/seashore/group-reply` require a deterministic
+  group-reply contract with `route`, `room_id`, `agent_id`, `parent_msg_id`,
+  `turn_id`, and `text`.
 - Context lines are filtered to avoid injecting prior tool traces or protocol
   noise into the next agent prompt.
 - The same `/group/*` endpoint family is present.

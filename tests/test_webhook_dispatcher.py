@@ -45,10 +45,13 @@ class HealthHandler(BaseHTTPRequestHandler):
 def make_request() -> DispatchRequest:
     return DispatchRequest(
         source="group",
+        route="group",
+        room_id="main",
         sender_id="you",
         text="hello @assistant-a",
         message_id="msg-1",
         parent_msg_id="",
+        turn_id="turn-1",
         mentions=["assistant-a"],
         targets=["assistant-a"],
         context="[12:00] You: hello",
@@ -85,6 +88,9 @@ class WebhookDispatcherTests(unittest.TestCase):
             self.assertEqual(record["body"]["event"], "group.message")
             self.assertEqual(record["body"]["target_agent_id"], "assistant-a")
             self.assertEqual(record["body"]["message"]["id"], "msg-1")
+            self.assertEqual(record["body"]["message"]["route"], "group")
+            self.assertEqual(record["body"]["message"]["room_id"], "main")
+            self.assertEqual(record["body"]["message"]["turn_id"], "turn-1")
             self.assertNotIn("agent-secret", json.dumps(record["body"]))
         finally:
             server.shutdown()

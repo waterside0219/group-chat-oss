@@ -44,6 +44,84 @@ curl -s -H "X-Auth-Token: $TOKEN" \
   http://127.0.0.1:8795/group/append | python -m json.tool
 ```
 
+For channel-style deployments, use `room_id` to keep a work room, casual room,
+or code review room in the same server without merging their timelines:
+
+```bash
+curl -s -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"route":"group","room_id":"code","sender_id":"you","text":"review this @assistant-a","turn_id":"turn_123"}' \
+  http://127.0.0.1:8795/group/send | python -m json.tool
+```
+
+Agents that are invoked by an external channel bridge can use the explicit group
+reply contract:
+
+```bash
+curl -s -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"route":"group","room_id":"code","agent_id":"assistant-a","parent_msg_id":"grp_...","turn_id":"turn_123","text":"review complete"}' \
+  http://127.0.0.1:8795/group/reply | python -m json.tool
+```
+
+`/mcp/seashore/group-reply` is also accepted as a compatibility alias for local
+MCP-style bridges. The required fields are `route="group"`, `room_id`,
+`agent_id`, `parent_msg_id`, `turn_id`, and `text`.
+
+## Rooms
+
+Use one server and separate rooms when the same people and agents need different
+operating modes:
+
+- `work`: high-signal workgroup room. Use it for decisions, live incidents,
+  task assignment, progress updates, and ship/block reports.
+- `casual`: loose chat room. Use it for non-task conversation, quick questions,
+  and context that should not automatically become work.
+- `code`: code review and implementation room. Use it for patches, test output,
+  API contracts, migration notes, and review sign-off.
+
+Clients keep rooms separate with `room_id`; history and poll calls accept the
+same field:
+
+```bash
+groupchat --token-file ~/.groupchat/token --room-id casual send "morning"
+groupchat --token-file ~/.groupchat/token --room-id code history --limit 20
+```
+
+## Task Board And P0/P1/P2
+
+The task board is derived from messages, so the chat log is the source of truth.
+Create tasks with `message_type="task"` and update them with `progress`, `block`,
+or `ship` plus `parent_task_id`.
+
+Priorities are explicit:
+
+- `p0`: urgent or blocking. Production breakage, user-visible failures, or work
+  that must be handled in the current session.
+- `p1`: important planned work. It should be picked up next, but it is not an
+  active outage.
+- `p2`: backlog, cleanup, documentation, or nice-to-have work.
+
+If a task omits priority, it defaults to `p1`. Invalid values are rejected.
+`GET /group/tasks` returns tasks sorted with P0 first, plus
+`counts_by_owner`, `counts_by_priority`, and the task event stream.
+Pass `room_id` to inspect one room's board, for example
+`GET /group/tasks?room_id=work`.
+
+```bash
+groupchat --token-file ~/.groupchat/token --room-id work \
+  send "Restore the webhook dispatcher @assistant-a" \
+  --message-type task --priority p0 --owner assistant-a
+
+groupchat --token-file ~/.groupchat/token --room-id work \
+  append "Waiting on cloud token" \
+  --sender-id assistant-a --message-type block \
+  --parent-task-id task_... --priority p0 --owner assistant-a
+
+curl -s -H "X-Auth-Token: $TOKEN" \
+  http://127.0.0.1:8795/group/tasks | python -m json.tool
+```
+
 ## Webhook Agents
 
 Webhook dispatching is the recommended non-tmux integration. The server POSTs each routed message to the target agent's `webhook_url`; the agent does its own work and replies with `POST /group/append`.
@@ -99,8 +177,8 @@ Agent reply contract:
 ```bash
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"sender_id":"assistant-a","text":"done","parent_msg_id":"grp_...","source":"webhook:assistant-a"}' \
-  http://127.0.0.1:8795/group/append | python -m json.tool
+  -d '{"route":"group","room_id":"main","agent_id":"assistant-a","text":"done","parent_msg_id":"grp_...","turn_id":"turn_..."}' \
+  http://127.0.0.1:8795/group/reply | python -m json.tool
 ```
 
 A minimal stdlib example is available at `examples/webhook_agent.py`:
@@ -123,7 +201,7 @@ groupchat --token-file ~/.groupchat/token history --limit 10
 
 GET: `/health`, `/version`, `/group/roster`, `/group/status`, `/group/tasks`, `/group/list`, `/group/history`, `/group/poll`, `/group/stats`.
 
-POST: `/group/send`, `/group/append`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
+POST: `/group/send`, `/group/append`, `/group/reply`, `/mcp/seashore/group-reply`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
 
 ## Stage One Scope
 

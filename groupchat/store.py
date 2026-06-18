@@ -20,6 +20,8 @@ TASK_STATUS_BY_MESSAGE_TYPE = {
     "ship": "done",
     "block": "blocked",
 }
+PRIORITIES = {"p0", "p1", "p2"}
+PRIORITY_RANK = {"p0": 0, "p1": 1, "p2": 2, None: 3}
 MENTION_RE = re.compile(r"@([A-Za-z0-9_\-]+|[\u4e00-\u9fff]+)")
 
 
@@ -46,6 +48,15 @@ def _dedupe_ordered(items: list[str]) -> list[str]:
 
 def _task_id() -> str:
     return f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+
+
+def _normalize_priority(priority: Any, *, required_for_task: bool = False) -> str | None:
+    if priority is None or priority == "":
+        return "p1" if required_for_task else None
+    value = str(priority).strip().lower()
+    if value not in PRIORITIES:
+        raise ValueError(f"bad priority: {priority}")
+    return value
 
 
 class GroupChatStore:
@@ -168,16 +179,22 @@ class GroupChatStore:
         text: str,
         *,
         source: str = "group",
+        route: str = "group",
+        room_id: str = "main",
         mentions: list[str] | None = None,
         parent_msg_id: str | None = None,
         reply_to: str | None = None,
         delivery: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
         conversation_id: str = "workgroup",
+        turn_id: str | None = None,
+        bubble_index: int | None = None,
+        bubble_count: int | None = None,
         message_type: str = "chat",
         task_id: str | None = None,
         parent_task_id: str | None = None,
         owner: str | None = None,
+        priority: str | None = None,
     ) -> dict[str, Any]:
         member = self._roster_by_id.get(sender_id)
         if not member:
@@ -190,16 +207,22 @@ class GroupChatStore:
             raise ValueError(f"bad message_type: {message_type}")
         if message_type == "task" and not task_id:
             task_id = _task_id()
+        priority = _normalize_priority(priority, required_for_task=message_type == "task")
         record = {
             "id": f"grp_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
             "ts": "",
             "conversation_id": conversation_id,
+            "route": route,
+            "room_id": room_id,
             "sender_id": sender_id,
             "sender_model": member.get("model"),
             "text": text,
             "mentions": mentions or [],
             "parent_msg_id": parent_msg_id,
             "reply_to": reply_to,
+            "turn_id": turn_id,
+            "bubble_index": bubble_index,
+            "bubble_count": bubble_count,
             "source": source,
             "delivery": delivery or {},
             "meta": meta or {},
@@ -207,6 +230,7 @@ class GroupChatStore:
             "task_id": task_id,
             "parent_task_id": parent_task_id,
             "owner": owner,
+            "priority": priority,
         }
         with self._lock:
             ts = self._next_ts()
@@ -223,9 +247,18 @@ class GroupChatStore:
         out = dict(rec)
         msg_type = str(out.get("message_type") or "chat").strip().lower()
         out["message_type"] = msg_type if msg_type in MESSAGE_TYPES else "chat"
+        out.setdefault("route", "group")
+        out.setdefault("room_id", "main")
+        out.setdefault("turn_id", None)
+        out.setdefault("bubble_index", None)
+        out.setdefault("bubble_count", None)
         out.setdefault("task_id", None)
         out.setdefault("parent_task_id", None)
         out.setdefault("owner", None)
+        try:
+            out["priority"] = _normalize_priority(out.get("priority"))
+        except ValueError:
+            out["priority"] = None
         return out
 
     def _iter_records(self) -> list[dict[str, Any]]:
@@ -243,7 +276,14 @@ class GroupChatStore:
                     continue
         return rows
 
-    def read_since(self, since_ts: str | None = None, *, before_ts: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def read_since(
+        self,
+        since_ts: str | None = None,
+        *,
+        before_ts: str | None = None,
+        limit: int = 100,
+        room_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for rec in self._iter_records():
             ts = rec.get("ts", "")
@@ -251,15 +291,19 @@ class GroupChatStore:
                 continue
             if before_ts and ts >= before_ts:
                 continue
+            if room_id and str(rec.get("room_id") or "main") != room_id:
+                continue
             rows.append(rec)
         if before_ts:
             return rows[-limit:]
         return rows[:limit] if since_ts else rows[-limit:]
 
-    def tasks_summary(self) -> dict[str, Any]:
+    def tasks_summary(self, *, room_id: str | None = None) -> dict[str, Any]:
         tasks: dict[str, dict[str, Any]] = {}
         events: list[dict[str, Any]] = []
         for rec in self._iter_records():
+            if room_id and str(rec.get("room_id") or "main") != room_id:
+                continue
             msg_type = rec.get("message_type", "chat")
             tid = rec.get("task_id") if msg_type == "task" else rec.get("parent_task_id")
             if msg_type not in TASK_STATUS_BY_MESSAGE_TYPE or not tid:
@@ -272,6 +316,7 @@ class GroupChatStore:
                         "task_id": tid,
                         "owner": rec.get("owner") or "unassigned",
                         "status": "open",
+                        "priority": rec.get("priority") or "p1",
                         "title": rec.get("text", ""),
                         "created_at": rec.get("ts"),
                         "updated_at": rec.get("ts"),
@@ -281,6 +326,8 @@ class GroupChatStore:
                 )
                 task["owner"] = rec.get("owner") or task.get("owner") or "unassigned"
                 task["status"] = "open"
+                if rec.get("priority"):
+                    task["priority"] = rec.get("priority")
             else:
                 task = tasks.setdefault(
                     str(tid),
@@ -288,6 +335,7 @@ class GroupChatStore:
                         "task_id": tid,
                         "owner": rec.get("owner") or "unassigned",
                         "status": status,
+                        "priority": rec.get("priority"),
                         "title": "",
                         "created_at": None,
                         "updated_at": rec.get("ts"),
@@ -297,6 +345,8 @@ class GroupChatStore:
                 )
                 if rec.get("owner"):
                     task["owner"] = rec.get("owner")
+                if rec.get("priority"):
+                    task["priority"] = rec.get("priority")
                 task["status"] = status
                 task["updated_at"] = rec.get("ts")
                 task["last_event_id"] = rec.get("id")
@@ -306,18 +356,26 @@ class GroupChatStore:
                     "task_id": tid,
                     "message_type": msg_type,
                     "status": status,
+                    "priority": rec.get("priority"),
                     "owner": rec.get("owner"),
                     "ts": rec.get("ts"),
                 }
             )
 
         counts_by_owner: dict[str, dict[str, int]] = {}
+        counts_by_priority = {"p0": 0, "p1": 0, "p2": 0, "none": 0, "total": 0}
         for task in tasks.values():
             owner = str(task.get("owner") or "unassigned")
             counts = counts_by_owner.setdefault(owner, {"open": 0, "in-progress": 0, "done": 0, "blocked": 0, "total": 0})
             status = str(task.get("status") or "open")
             counts[status] = counts.get(status, 0) + 1
             counts["total"] += 1
+            priority = task.get("priority")
+            if priority in PRIORITIES:
+                counts_by_priority[str(priority)] += 1
+            else:
+                counts_by_priority["none"] += 1
+            counts_by_priority["total"] += 1
 
         roster_order = self._reply_agent_ids + ["unassigned"]
         ordered_counts = {
@@ -330,8 +388,16 @@ class GroupChatStore:
                 ordered_counts[owner] = counts
 
         return {
-            "tasks": sorted(tasks.values(), key=lambda t: str(t.get("updated_at") or "")),
+            "tasks": sorted(
+                tasks.values(),
+                key=lambda t: (
+                    PRIORITY_RANK.get(t.get("priority"), 3),
+                    1 if t.get("status") == "done" else 0,
+                    str(t.get("updated_at") or ""),
+                ),
+            ),
             "counts_by_owner": ordered_counts,
+            "counts_by_priority": counts_by_priority,
             "events": events,
         }
 
@@ -365,10 +431,10 @@ class GroupChatStore:
                     f.write(line + "\n")
         return True
 
-    def tail(self, limit: int = 20) -> list[dict[str, Any]]:
-        return self.read_since(limit=limit)
+    def tail(self, limit: int = 20, *, room_id: str | None = None) -> list[dict[str, Any]]:
+        return self.read_since(limit=limit, room_id=room_id)
 
-    def context_lines(self, limit: int = 20) -> list[str]:
+    def context_lines(self, limit: int = 20, *, room_id: str | None = None) -> list[str]:
         tool_trace_prefixes = (
             "Explored", "Ran ", "Ran\n", "Read ", "Read\n", "Edited ", "Edited\n",
             "Wrote ", "Wrote\n", "Searched", "Searching", "Search ", "Search\n",
@@ -383,7 +449,7 @@ class GroupChatStore:
         )
         raw_pull = max(limit * 3, 60)
         lines: list[str] = []
-        for rec in self.tail(raw_pull):
+        for rec in self.tail(raw_pull, room_id=room_id):
             sender_id = rec.get("sender_id", "")
             text_raw = str(rec.get("text", "")).strip()
             text_lstripped = text_raw.lstrip()

@@ -37,9 +37,11 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--base-url", default="http://127.0.0.1:8795")
     parser.add_argument("--token")
     parser.add_argument("--token-file", default="~/.groupchat/token")
+    parser.add_argument("--room-id", default="main")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("status")
+    sub.add_parser("tasks")
     hist = sub.add_parser("history")
     hist.add_argument("--limit", type=int, default=20)
 
@@ -48,6 +50,11 @@ def main(argv: list[str] | None = None):
     send.add_argument("--sender-id", default="you")
     send.add_argument("--mentions", default="")
     send.add_argument("--message-type", default="chat")
+    send.add_argument("--turn-id", default="")
+    send.add_argument("--priority", default="")
+    send.add_argument("--task-id", default="")
+    send.add_argument("--parent-task-id", default="")
+    send.add_argument("--owner", default="")
     send.add_argument("--wait", type=float, default=0)
 
     append = sub.add_parser("append")
@@ -55,22 +62,46 @@ def main(argv: list[str] | None = None):
     append.add_argument("--sender-id", required=True)
     append.add_argument("--mentions", default="")
     append.add_argument("--parent-msg-id", default="")
+    append.add_argument("--turn-id", default="")
+    append.add_argument("--message-type", default="chat")
+    append.add_argument("--priority", default="")
+    append.add_argument("--task-id", default="")
+    append.add_argument("--parent-task-id", default="")
+    append.add_argument("--owner", default="")
     append.add_argument("--hop-count", type=int, default=0)
+
+    reply = sub.add_parser("reply")
+    reply.add_argument("text")
+    reply.add_argument("--agent-id", required=True)
+    reply.add_argument("--parent-msg-id", required=True)
+    reply.add_argument("--turn-id", required=True)
+    reply.add_argument("--bubble-index", type=int)
+    reply.add_argument("--bubble-count", type=int)
 
     args = parser.parse_args(argv)
     token = read_token(args.token, args.token_file)
 
     if args.cmd == "status":
         print(json.dumps(http_json(args.base_url, "GET", "/group/status", token), ensure_ascii=False, indent=2))
+    elif args.cmd == "tasks":
+        path = "/group/tasks?" + parse.urlencode({"room_id": args.room_id})
+        print(json.dumps(http_json(args.base_url, "GET", path, token), ensure_ascii=False, indent=2))
     elif args.cmd == "history":
-        path = "/group/history?" + parse.urlencode({"limit": args.limit})
+        path = "/group/history?" + parse.urlencode({"limit": args.limit, "room_id": args.room_id})
         print(json.dumps(http_json(args.base_url, "GET", path, token), ensure_ascii=False, indent=2))
     elif args.cmd == "send":
         body = {
             "sender_id": args.sender_id,
+            "route": "group",
+            "room_id": args.room_id,
             "text": args.text,
             "mentions": args.mentions,
             "message_type": args.message_type,
+            "turn_id": args.turn_id,
+            "priority": args.priority,
+            "task_id": args.task_id,
+            "parent_task_id": args.parent_task_id,
+            "owner": args.owner,
             "source": "cli",
         }
         res = http_json(args.base_url, "POST", "/group/send", token, body)
@@ -89,13 +120,35 @@ def main(argv: list[str] | None = None):
     elif args.cmd == "append":
         body = {
             "sender_id": args.sender_id,
+            "route": "group",
+            "room_id": args.room_id,
             "text": args.text,
             "mentions": args.mentions,
             "parent_msg_id": args.parent_msg_id,
+            "turn_id": args.turn_id,
+            "message_type": args.message_type,
+            "priority": args.priority,
+            "task_id": args.task_id,
+            "parent_task_id": args.parent_task_id,
+            "owner": args.owner,
             "hop_count": args.hop_count,
             "source": "cli",
         }
         print(json.dumps(http_json(args.base_url, "POST", "/group/append", token, body), ensure_ascii=False, indent=2))
+    elif args.cmd == "reply":
+        body = {
+            "route": "group",
+            "room_id": args.room_id,
+            "agent_id": args.agent_id,
+            "parent_msg_id": args.parent_msg_id,
+            "turn_id": args.turn_id,
+            "text": args.text,
+        }
+        if args.bubble_index is not None:
+            body["bubble_index"] = args.bubble_index
+        if args.bubble_count is not None:
+            body["bubble_count"] = args.bubble_count
+        print(json.dumps(http_json(args.base_url, "POST", "/group/reply", token, body), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
