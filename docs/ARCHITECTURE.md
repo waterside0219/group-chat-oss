@@ -55,6 +55,7 @@ system:
 - `GET /group/roster`
 - `GET /group/status`
 - `GET /group/tasks`
+- `GET /group/deliveries`
 - `GET /group/list`
 - `GET /group/history`
 - `GET /group/poll`
@@ -62,6 +63,7 @@ system:
 - `POST /group/send`
 - `POST /group/append`
 - `POST /group/reply`
+- `POST /group/ack`
 - `POST /mcp/seashore/group-reply`
 - `POST /group/dispatch-state`
 - `POST /group/typing`
@@ -127,6 +129,28 @@ of being silently normalized.
 The server infers `owner` from an explicit `owner`, `assignee`, or
 `assigned_to` field. If those are absent, the first mentioned reply-capable agent
 becomes the owner.
+
+## Delivery And Acknowledgement Loop
+
+Mentioning or dispatching an agent is not treated as completion. Any message
+with `delivery.targets` creates an acknowledgement expectation for each target.
+The expectation is cleared when that target posts either:
+
+- `POST /group/ack`
+- `POST /group/reply`
+- `POST /group/append` with `parent_msg_id` equal to the original message id
+
+`GET /group/deliveries?room_id=work` returns:
+
+- `pending`: target has not acknowledged yet, but is still inside the timeout
+- `overdue`: target has not acknowledged before `ack_timeout_seconds`
+- `acknowledged`: target has replied or sent ACK
+- `counts`: totals for the same buckets
+
+The task board includes `delivery_counts` so a UI can show when work is blocked
+because a responsible agent did not pick it up. Deployments should escalate
+`overdue` items to a fallback reviewer or the human instead of letting the work
+silently disappear.
 
 ## Rooms And Reply Contracts
 

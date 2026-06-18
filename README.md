@@ -88,6 +88,33 @@ groupchat --token-file ~/.groupchat/token --room-id casual send "morning"
 groupchat --token-file ~/.groupchat/token --room-id code history --limit 20
 ```
 
+## How A Workgroup Should Behave
+
+A useful workgroup is not just a shared chat. It needs a response loop:
+
+1. A human writes the need in plain language.
+2. The coordinator turns it into a task, owner, and priority.
+3. The named owner must acknowledge the message with `ACK` or reply under the
+   same `parent_msg_id`.
+4. If there is no acknowledgement before the timeout, the item is overdue and
+   should be escalated to the fallback reviewer or the human.
+5. The task board stays visible until the work is shipped, blocked, or explicitly
+   closed.
+
+In practice:
+
+- Use the work room for tasks and decisions.
+- Use the casual room for conversation that should not become work.
+- Use the code room for patches, tests, migrations, and review.
+- Do not rely on memory or vibes. If an agent was mentioned, check the delivery
+  board to see whether it actually responded.
+
+```bash
+groupchat --token-file ~/.groupchat/token --room-id work deliveries
+groupchat --token-file ~/.groupchat/token --room-id work \
+  ack --agent-id assistant-a --parent-msg-id grp_... --text "I am taking this"
+```
+
 ## Task Board And P0/P1/P2
 
 The task board is derived from messages, so the chat log is the source of truth.
@@ -121,6 +148,9 @@ groupchat --token-file ~/.groupchat/token --room-id work \
 curl -s -H "X-Auth-Token: $TOKEN" \
   http://127.0.0.1:8795/group/tasks | python -m json.tool
 ```
+
+The task board response also includes `delivery_counts`. If `overdue > 0`, the
+workgroup has mentioned someone who has not acknowledged or replied in time.
 
 ## Webhook Agents
 
@@ -199,9 +229,9 @@ groupchat --token-file ~/.groupchat/token history --limit 10
 
 ## Endpoints
 
-GET: `/health`, `/version`, `/group/roster`, `/group/status`, `/group/tasks`, `/group/list`, `/group/history`, `/group/poll`, `/group/stats`.
+GET: `/health`, `/version`, `/group/roster`, `/group/status`, `/group/tasks`, `/group/deliveries`, `/group/list`, `/group/history`, `/group/poll`, `/group/stats`.
 
-POST: `/group/send`, `/group/append`, `/group/reply`, `/mcp/seashore/group-reply`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
+POST: `/group/send`, `/group/append`, `/group/reply`, `/group/ack`, `/mcp/seashore/group-reply`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
 
 ## Stage One Scope
 

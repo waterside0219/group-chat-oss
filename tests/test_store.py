@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -95,6 +96,31 @@ class StoreTests(unittest.TestCase):
             store = make_store(Path(td))
             with self.assertRaises(ValueError):
                 store.append("you", "bad", message_type="task", priority="p9")
+
+    def test_delivery_summary_tracks_ack_and_overdue(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = make_store(Path(td))
+            msg = store.append(
+                "you",
+                "please handle this @assistant-a",
+                room_id="work",
+                mentions=["assistant-a"],
+                delivery={"targets": ["assistant-a"], "delivered": [], "failed": []},
+            )
+            ts = datetime.fromisoformat(msg["ts"])
+            pending = store.delivery_summary(room_id="work", ack_timeout_seconds=300, now=ts + timedelta(seconds=60))
+            self.assertEqual(pending["counts"]["pending"], 1)
+            self.assertEqual(pending["counts"]["overdue"], 0)
+
+            overdue = store.delivery_summary(room_id="work", ack_timeout_seconds=300, now=ts + timedelta(seconds=301))
+            self.assertEqual(overdue["counts"]["pending"], 0)
+            self.assertEqual(overdue["counts"]["overdue"], 1)
+
+            ack = store.append("assistant-a", "ACK", room_id="work", parent_msg_id=msg["id"], message_type="ack")
+            done = store.delivery_summary(room_id="work", ack_timeout_seconds=300, now=datetime.fromisoformat(ack["ts"]))
+            self.assertEqual(done["counts"]["acknowledged"], 1)
+            self.assertEqual(done["acknowledged"][0]["ack_message_id"], ack["id"])
+            self.assertEqual(store.tasks_summary(room_id="work")["delivery_counts"]["acknowledged"], 1)
 
     def test_context_filters_agent_tool_trace(self):
         with tempfile.TemporaryDirectory() as td:

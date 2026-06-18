@@ -42,6 +42,8 @@ def main(argv: list[str] | None = None):
 
     sub.add_parser("status")
     sub.add_parser("tasks")
+    deliveries = sub.add_parser("deliveries")
+    deliveries.add_argument("--ack-timeout-seconds", type=int, default=300)
     hist = sub.add_parser("history")
     hist.add_argument("--limit", type=int, default=20)
 
@@ -78,6 +80,12 @@ def main(argv: list[str] | None = None):
     reply.add_argument("--bubble-index", type=int)
     reply.add_argument("--bubble-count", type=int)
 
+    ack = sub.add_parser("ack")
+    ack.add_argument("--agent-id", required=True)
+    ack.add_argument("--parent-msg-id", required=True)
+    ack.add_argument("--turn-id", default="")
+    ack.add_argument("--text", default="ACK")
+
     args = parser.parse_args(argv)
     token = read_token(args.token, args.token_file)
 
@@ -85,6 +93,12 @@ def main(argv: list[str] | None = None):
         print(json.dumps(http_json(args.base_url, "GET", "/group/status", token), ensure_ascii=False, indent=2))
     elif args.cmd == "tasks":
         path = "/group/tasks?" + parse.urlencode({"room_id": args.room_id})
+        print(json.dumps(http_json(args.base_url, "GET", path, token), ensure_ascii=False, indent=2))
+    elif args.cmd == "deliveries":
+        path = "/group/deliveries?" + parse.urlencode({
+            "room_id": args.room_id,
+            "ack_timeout_seconds": args.ack_timeout_seconds,
+        })
         print(json.dumps(http_json(args.base_url, "GET", path, token), ensure_ascii=False, indent=2))
     elif args.cmd == "history":
         path = "/group/history?" + parse.urlencode({"limit": args.limit, "room_id": args.room_id})
@@ -149,6 +163,15 @@ def main(argv: list[str] | None = None):
         if args.bubble_count is not None:
             body["bubble_count"] = args.bubble_count
         print(json.dumps(http_json(args.base_url, "POST", "/group/reply", token, body), ensure_ascii=False, indent=2))
+    elif args.cmd == "ack":
+        body = {
+            "room_id": args.room_id,
+            "agent_id": args.agent_id,
+            "parent_msg_id": args.parent_msg_id,
+            "turn_id": args.turn_id,
+            "text": args.text,
+        }
+        print(json.dumps(http_json(args.base_url, "POST", "/group/ack", token, body), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

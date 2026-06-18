@@ -13,7 +13,7 @@ from .config import DEFAULT_MEMBERS, default_aliases
 
 
 ALL_TOKEN = "__all__"
-MESSAGE_TYPES = {"task", "decision", "ship", "block", "progress", "chat"}
+MESSAGE_TYPES = {"task", "decision", "ship", "block", "progress", "chat", "ack"}
 TASK_STATUS_BY_MESSAGE_TYPE = {
     "task": "open",
     "progress": "in-progress",
@@ -23,6 +23,7 @@ TASK_STATUS_BY_MESSAGE_TYPE = {
 PRIORITIES = {"p0", "p1", "p2"}
 PRIORITY_RANK = {"p0": 0, "p1": 1, "p2": 2, None: 3}
 MENTION_RE = re.compile(r"@([A-Za-z0-9_\-]+|[\u4e00-\u9fff]+)")
+DEFAULT_ACK_TIMEOUT_SECONDS = 300
 
 
 def _now_iso() -> str:
@@ -298,6 +299,70 @@ class GroupChatStore:
             return rows[-limit:]
         return rows[:limit] if since_ts else rows[-limit:]
 
+    def delivery_summary(
+        self,
+        *,
+        room_id: str | None = None,
+        ack_timeout_seconds: int = DEFAULT_ACK_TIMEOUT_SECONDS,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        rows = self._iter_records()
+        now = now or datetime.now(timezone.utc).astimezone()
+        replies_by_parent: dict[tuple[str, str], dict[str, Any]] = {}
+        for rec in rows:
+            parent_id = rec.get("parent_msg_id")
+            sender_id = rec.get("sender_id")
+            if parent_id and sender_id:
+                replies_by_parent.setdefault((str(parent_id), str(sender_id)), rec)
+
+        pending: list[dict[str, Any]] = []
+        acknowledged: list[dict[str, Any]] = []
+        overdue: list[dict[str, Any]] = []
+        for rec in rows:
+            if room_id and str(rec.get("room_id") or "main") != room_id:
+                continue
+            targets = rec.get("delivery", {}).get("targets") or []
+            if not isinstance(targets, list) or not targets:
+                continue
+            for target in targets:
+                target_id = str(target)
+                ack = replies_by_parent.get((str(rec.get("id")), target_id))
+                item = {
+                    "message_id": rec.get("id"),
+                    "room_id": rec.get("room_id"),
+                    "target_agent_id": target_id,
+                    "sender_id": rec.get("sender_id"),
+                    "text": rec.get("text"),
+                    "ts": rec.get("ts"),
+                    "ack_message_id": ack.get("id") if ack else None,
+                    "ack_ts": ack.get("ts") if ack else None,
+                    "status": "acknowledged" if ack else "pending",
+                }
+                if ack:
+                    acknowledged.append(item)
+                    continue
+                msg_ts = _parse_iso(str(rec.get("ts") or ""))
+                age_seconds = int((now - msg_ts).total_seconds()) if msg_ts else None
+                item["age_seconds"] = age_seconds
+                item["ack_timeout_seconds"] = ack_timeout_seconds
+                if age_seconds is not None and age_seconds >= ack_timeout_seconds:
+                    item["status"] = "overdue"
+                    overdue.append(item)
+                else:
+                    pending.append(item)
+
+        return {
+            "pending": pending,
+            "overdue": overdue,
+            "acknowledged": acknowledged,
+            "counts": {
+                "pending": len(pending),
+                "overdue": len(overdue),
+                "acknowledged": len(acknowledged),
+                "total": len(pending) + len(overdue) + len(acknowledged),
+            },
+        }
+
     def tasks_summary(self, *, room_id: str | None = None) -> dict[str, Any]:
         tasks: dict[str, dict[str, Any]] = {}
         events: list[dict[str, Any]] = []
@@ -398,6 +463,7 @@ class GroupChatStore:
             ),
             "counts_by_owner": ordered_counts,
             "counts_by_priority": counts_by_priority,
+            "delivery_counts": self.delivery_summary(room_id=room_id)["counts"],
             "events": events,
         }
 

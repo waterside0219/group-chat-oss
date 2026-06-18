@@ -110,6 +110,8 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_status()
         elif route == "/group/tasks":
             self._handle_group_tasks()
+        elif route == "/group/deliveries":
+            self._handle_group_deliveries()
         elif route in {"/group/list", "/group/history"}:
             self._handle_group_history()
         elif route == "/group/poll":
@@ -134,6 +136,8 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_append(body)
         elif route in {"/group/reply", "/mcp/seashore/group-reply"}:
             self._handle_group_reply(body)
+        elif route == "/group/ack":
+            self._handle_group_ack(body)
         elif route == "/group/dispatch-state":
             self._handle_group_dispatch_state(body)
         elif route == "/group/typing":
@@ -194,6 +198,24 @@ class GroupChatHandler(BaseHTTPRequestHandler):
         qs = self._query()
         room_id = self._query_value(qs, "room_id")
         self._send_json(200, {"ok": True, **self.state.group_chat.tasks_summary(room_id=room_id)})
+
+    def _handle_group_deliveries(self):
+        qs = self._query()
+        room_id = self._query_value(qs, "room_id")
+        try:
+            ack_timeout_seconds = int(self._query_value(qs, "ack_timeout_seconds", "300") or "300")
+        except Exception:
+            ack_timeout_seconds = 300
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                **self.state.group_chat.delivery_summary(
+                    room_id=room_id,
+                    ack_timeout_seconds=max(ack_timeout_seconds, 1),
+                ),
+            },
+        )
 
     def _handle_group_history(self):
         qs = self._query()
@@ -405,6 +427,26 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             "text": text,
             "source": body.get("source") or f"group-reply:{agent_id}",
         })
+        self._handle_group_append(payload)
+
+    def _handle_group_ack(self, body: dict[str, Any]):
+        agent_id = str(body.get("agent_id") or body.get("sender_id") or "").strip()
+        parent_msg_id = str(body.get("parent_msg_id") or "").strip()
+        room_id = str(body.get("room_id") or "main").strip() or "main"
+        turn_id = str(body.get("turn_id") or "").strip() or None
+        if not agent_id or not parent_msg_id:
+            self._send_json(400, {"ok": False, "error": "agent_id and parent_msg_id required"})
+            return
+        payload = {
+            "sender_id": agent_id,
+            "route": "group",
+            "room_id": room_id,
+            "parent_msg_id": parent_msg_id,
+            "turn_id": turn_id,
+            "text": str(body.get("text") or "ACK").strip() or "ACK",
+            "message_type": "ack",
+            "source": body.get("source") or f"ack:{agent_id}",
+        }
         self._handle_group_append(payload)
 
     def _optional_int(self, value: Any) -> int | None:
