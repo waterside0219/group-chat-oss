@@ -13,12 +13,24 @@ from .config import DEFAULT_MEMBERS, default_aliases
 
 
 ALL_TOKEN = "__all__"
-MESSAGE_TYPES = {"task", "decision", "ship", "block", "progress", "chat", "ack"}
+GROUP_KINDS = {"chat", "task", "review_request", "question", "broadcast"}
+MESSAGE_TYPES = {
+    *GROUP_KINDS,
+    "decision",
+    "ship",
+    "block",
+    "progress",
+    "ack",
+    "review_clear",
+}
+THREAD_START_TYPES = {"task", "review_request"}
 TASK_STATUS_BY_MESSAGE_TYPE = {
     "task": "open",
+    "review_request": "waiting_review",
     "progress": "in-progress",
     "ship": "done",
     "block": "blocked",
+    "review_clear": "resolved",
 }
 PRIORITIES = {"p0", "p1", "p2"}
 PRIORITY_RANK = {"p0": 0, "p1": 1, "p2": 2, None: 3}
@@ -206,7 +218,7 @@ class GroupChatStore:
         message_type = str(message_type or "chat").strip().lower()
         if message_type not in MESSAGE_TYPES:
             raise ValueError(f"bad message_type: {message_type}")
-        if message_type == "task" and not task_id:
+        if message_type in THREAD_START_TYPES and not task_id:
             task_id = _task_id()
         priority = _normalize_priority(priority, required_for_task=message_type == "task")
         record = {
@@ -256,6 +268,12 @@ class GroupChatStore:
         out.setdefault("task_id", None)
         out.setdefault("parent_task_id", None)
         out.setdefault("owner", None)
+        out.setdefault("acked_by", [])
+        out.setdefault("acked_at", None)
+        out.setdefault("ack_deadline", None)
+        out.setdefault("ack_deadline_seconds", None)
+        out.setdefault("escalate_to", None)
+        out.setdefault("escalation_state", None)
         try:
             out["priority"] = _normalize_priority(out.get("priority"))
         except ValueError:
@@ -299,6 +317,39 @@ class GroupChatStore:
             return rows[-limit:]
         return rows[:limit] if since_ts else rows[-limit:]
 
+    def find_record(self, msg_id: str) -> dict[str, Any] | None:
+        for rec in self._iter_records():
+            if rec.get("id") == msg_id:
+                return rec
+        return None
+
+    def mark_reminded(self, message_id: str, target_agent_id: str, *, now: datetime | None = None) -> bool:
+        rows = self._iter_records()
+        changed = False
+        ts = (now or datetime.now(timezone.utc).astimezone()).isoformat(timespec="milliseconds")
+        for rec in rows:
+            if rec.get("id") != message_id:
+                continue
+            delivery = rec.setdefault("delivery", {})
+            reminders = delivery.setdefault("reminders", {})
+            if not isinstance(reminders, dict):
+                reminders = {}
+                delivery["reminders"] = reminders
+            target_state = reminders.setdefault(str(target_agent_id), {})
+            if not isinstance(target_state, dict):
+                target_state = {}
+                reminders[str(target_agent_id)] = target_state
+            target_state["reminded_at"] = ts
+            changed = True
+            break
+        if not changed:
+            return False
+        with self._lock:
+            with open(self.path, "w", encoding="utf-8") as f:
+                for rec in rows:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+
     def delivery_summary(
         self,
         *,
@@ -337,6 +388,9 @@ class GroupChatStore:
                     "ack_message_id": ack.get("id") if ack else None,
                     "ack_ts": ack.get("ts") if ack else None,
                     "status": "acknowledged" if ack else "pending",
+                    "reminded_at": (rec.get("delivery", {}).get("reminders") or {}).get(target_id, {}).get("reminded_at")
+                    if isinstance((rec.get("delivery", {}).get("reminders") or {}).get(target_id), dict)
+                    else None,
                 }
                 if ack:
                     acknowledged.append(item)
@@ -370,27 +424,32 @@ class GroupChatStore:
             if room_id and str(rec.get("room_id") or "main") != room_id:
                 continue
             msg_type = rec.get("message_type", "chat")
-            tid = rec.get("task_id") if msg_type == "task" else rec.get("parent_task_id")
+            tid = rec.get("task_id") if msg_type in THREAD_START_TYPES else rec.get("parent_task_id")
             if msg_type not in TASK_STATUS_BY_MESSAGE_TYPE or not tid:
                 continue
             status = TASK_STATUS_BY_MESSAGE_TYPE[msg_type]
-            if msg_type == "task":
+            if msg_type in THREAD_START_TYPES:
                 task = tasks.setdefault(
                     str(tid),
                     {
                         "task_id": tid,
                         "owner": rec.get("owner") or "unassigned",
-                        "status": "open",
+                        "status": status,
                         "priority": rec.get("priority") or "p1",
                         "title": rec.get("text", ""),
                         "created_at": rec.get("ts"),
                         "updated_at": rec.get("ts"),
                         "source_msg_id": rec.get("id"),
                         "last_event_id": rec.get("id"),
+                        "thread_kind": msg_type,
+                        "mentions": rec.get("mentions") or [],
+                        "comments": [],
+                        "severity_summary": {"P0": 0, "P1": 0, "P2": 0},
+                        "all_clear_by": [],
                     },
                 )
                 task["owner"] = rec.get("owner") or task.get("owner") or "unassigned"
-                task["status"] = "open"
+                task["status"] = status
                 if rec.get("priority"):
                     task["priority"] = rec.get("priority")
             else:
@@ -406,13 +465,40 @@ class GroupChatStore:
                         "updated_at": rec.get("ts"),
                         "source_msg_id": None,
                         "last_event_id": rec.get("id"),
+                        "thread_kind": "task",
+                        "mentions": [],
+                        "comments": [],
+                        "severity_summary": {"P0": 0, "P1": 0, "P2": 0},
+                        "all_clear_by": [],
                     },
                 )
                 if rec.get("owner"):
                     task["owner"] = rec.get("owner")
                 if rec.get("priority"):
                     task["priority"] = rec.get("priority")
-                task["status"] = status
+                meta = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
+                severity = str(meta.get("severity") or "").upper()
+                if severity in {"P0", "P1", "P2"}:
+                    task.setdefault("severity_summary", {"P0": 0, "P1": 0, "P2": 0})[severity] += 1
+                if msg_type == "review_clear":
+                    if rec.get("sender_id") not in task.setdefault("all_clear_by", []):
+                        task["all_clear_by"].append(rec.get("sender_id"))
+                    status = "resolved"
+                task.setdefault("comments", []).append(
+                    {
+                        "message_id": rec.get("id"),
+                        "sender_id": rec.get("sender_id"),
+                        "message_type": msg_type,
+                        "severity": severity or None,
+                        "all_clear": msg_type == "review_clear",
+                        "text": rec.get("text"),
+                        "ts": rec.get("ts"),
+                    }
+                )
+                if task.get("thread_kind") == "review_request" and msg_type != "review_clear":
+                    task["status"] = "waiting_review"
+                else:
+                    task["status"] = status
                 task["updated_at"] = rec.get("ts")
                 task["last_event_id"] = rec.get("id")
             events.append(

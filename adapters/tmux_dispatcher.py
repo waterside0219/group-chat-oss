@@ -55,20 +55,32 @@ class TmuxDispatcher:
             if not session:
                 failed.append(agent_id)
                 continue
-            if self.inject_tmux(session, inject_text):
+            if self.inject_tmux(session, inject_text, buffer_hint=f"{request.message_id}_{session}"):
                 self.write_trigger(agent_id, session, request)
                 delivered.append(agent_id)
             else:
                 failed.append(agent_id)
         return delivered, failed
 
-    def inject_tmux(self, session: str, text: str) -> bool:
+    def inject_tmux(self, session: str, text: str, *, buffer_hint: str = "") -> bool:
         try:
             result = subprocess.run(["tmux", "has-session", "-t", session], capture_output=True, timeout=3)
             if result.returncode != 0:
                 return False
-            subprocess.run(["tmux", "load-buffer", "-"], input=text.encode("utf-8"), check=True, capture_output=True, timeout=5)
-            subprocess.run(["tmux", "paste-buffer", "-t", session, "-p"], check=True, capture_output=True, timeout=5)
+            buffer_name = "groupchat_" + safe_file_stem(buffer_hint or session)
+            subprocess.run(
+                ["tmux", "load-buffer", "-b", buffer_name, "-"],
+                input=text.encode("utf-8"),
+                check=True,
+                capture_output=True,
+                timeout=5,
+            )
+            subprocess.run(
+                ["tmux", "paste-buffer", "-b", buffer_name, "-d", "-p", "-t", session],
+                check=True,
+                capture_output=True,
+                timeout=5,
+            )
             subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], check=True, capture_output=True, timeout=5)
             return True
         except Exception:
@@ -92,6 +104,9 @@ class TmuxDispatcher:
                 "Read the local context file before replying.",
                 "Visible workgroup replies must use the configured group reply API.",
                 "A group reply payload should include route, room_id, agent_id, parent_msg_id, text, and turn_id when available.",
+                "If you are explicitly mentioned, acknowledge within 5 minutes with a first line that restates the task, gives an estimate, and says you are starting.",
+                "Use message kinds deliberately: chat, task, review_request, question, or broadcast.",
+                "For review comments, start findings with P0, P1, or P2. Use a line starting with ALL_CLEAR only when review is fully clean.",
                 "Only mention another agent when handing off or asking for review.",
                 "Do not fan out to everyone unless the system explicitly supports it.",
                 "If remaining_handoffs is 0, summarize for the human instead of handing off.",

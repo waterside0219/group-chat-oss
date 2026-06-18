@@ -1,7 +1,7 @@
 // GroupChatDemo.swift
 //
 // group-chat-oss 的 iOS 集成示例(SwiftUI)。
-// 演示如何连一个 group-chat-oss 后端:拉取历史、显示消息、发送消息。
+// 演示如何连一个 group-chat-oss 后端:拉取历史、显示消息、选择消息类型、发送消息。
 // 这是参考示例,不是完整 App——把它丢进你自己的 Xcode 工程即可用。
 //
 // 后端默认接口(见 README):
@@ -25,23 +25,46 @@ struct GroupChatConfig {
 // MARK: - 数据模型
 
 /// 跟后端 /group/history 返回的消息字段对齐;字段名按你的后端实际返回微调。
+enum GroupMessageKind: String, CaseIterable, Identifiable {
+    case chat
+    case task
+    case reviewRequest = "review_request"
+    case question
+    case broadcast
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .task: return "Task"
+        case .reviewRequest: return "Review"
+        case .question: return "Question"
+        case .broadcast: return "Broadcast"
+        }
+    }
+}
+
 struct GroupMessage: Identifiable, Decodable {
-    let id: Int
+    let id: String
     let senderID: String
     let text: String
     let ts: String?
+    let messageType: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case senderID = "sender_id"
         case text
         case ts
+        case messageType = "message_type"
     }
 }
 
 /// /group/history 可能返回 {"messages": [...]} 或直接数组,这里两种都兼容。
 private struct HistoryResponse: Decodable {
     let messages: [GroupMessage]?
+    let records: [GroupMessage]?
 }
 
 // MARK: - ViewModel
@@ -50,6 +73,7 @@ private struct HistoryResponse: Decodable {
 final class GroupChatViewModel: ObservableObject {
     @Published var messages: [GroupMessage] = []
     @Published var draft: String = ""
+    @Published var selectedKind: GroupMessageKind = .chat
     @Published var errorText: String?
 
     private let config: GroupChatConfig
@@ -73,7 +97,7 @@ final class GroupChatViewModel: ObservableObject {
         do {
             let (data, _) = try await URLSession.shared.data(for: makeRequest("group/history"))
             if let wrapped = try? JSONDecoder().decode(HistoryResponse.self, from: data),
-               let list = wrapped.messages {
+               let list = wrapped.messages ?? wrapped.records {
                 messages = list
             } else if let list = try? JSONDecoder().decode([GroupMessage].self, from: data) {
                 messages = list
@@ -91,7 +115,12 @@ final class GroupChatViewModel: ObservableObject {
         do {
             _ = try await URLSession.shared.data(
                 for: makeRequest("group/send", method: "POST",
-                                 json: ["sender_id": config.senderID, "text": text])
+                                 json: [
+                                    "sender_id": config.senderID,
+                                    "text": text,
+                                    "message_type": selectedKind.rawValue,
+                                    "kind": selectedKind.rawValue
+                                 ])
             )
             await loadHistory()
         } catch {
@@ -116,7 +145,12 @@ struct GroupChatDemoView: View {
             }
             List(vm.messages) { msg in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(msg.senderID).font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text(msg.senderID).font(.caption).foregroundStyle(.secondary)
+                        if let messageType = msg.messageType {
+                            Text(messageType).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                     Text(msg.text)
                 }
                 .padding(.vertical, 2)
@@ -124,12 +158,21 @@ struct GroupChatDemoView: View {
             .listStyle(.plain)
             .refreshable { await vm.loadHistory() }
 
-            HStack(spacing: 8) {
+            VStack(spacing: 8) {
+                Picker("Message type", selection: $vm.selectedKind) {
+                    ForEach(GroupMessageKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                HStack(spacing: 8) {
                 TextField("说点什么…", text: $vm.draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                 Button("发送") { Task { await vm.send() } }
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
             .padding()
         }

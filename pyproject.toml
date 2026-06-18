@@ -15,6 +15,7 @@ dependencies = []
 [project.scripts]
 groupchat-server = "groupchat.server:main"
 groupchat = "groupchat.cli:main"
+groupchat-ack-reminder = "groupchat.ack_reminder:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

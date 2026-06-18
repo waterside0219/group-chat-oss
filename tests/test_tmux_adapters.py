@@ -41,7 +41,7 @@ class TmuxAdapterTests(unittest.TestCase):
         raw = "\n".join(
             [
                 "[WORKGROUP msg_id=abc remaining_handoffs=2]",
-                "工作群协议和最近上下文在本机文件：/tmp/ccc_group_context_abc.md",
+                "Workgroup protocol and recent context file: /tmp/groupchat_context_abc.md",
                 "Token usage: total=123",
                 "codex resume abc",
                 "final answer",

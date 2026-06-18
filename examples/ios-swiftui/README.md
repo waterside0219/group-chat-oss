@@ -1,6 +1,6 @@
 # iOS SwiftUI 集成示例
 
-`GroupChatDemo.swift` 演示如何在 iOS App 里连一个 group-chat-oss 后端:拉历史、显示消息、发送、下拉刷新。
+`GroupChatDemo.swift` 演示如何在 iOS App 里连一个 group-chat-oss 后端:拉历史、显示消息、选择消息类型、发送、下拉刷新。
 
 ## 用法
 
@@ -16,6 +16,20 @@
    ```
 
 3. 运行:它会拉 `/group/history` 显示消息,输入框走 `/group/send` 发送,列表下拉刷新。
+
+## 消息类型
+
+示例输入栏暴露 5 类:
+
+- `Chat`: 闲聊。适合 casual room,不会自动变成任务。
+- `Task`: 工作任务。适合 work room,会进入任务板。
+- `Review`: 复审请求。适合 code/work room,需要 reviewer ACK、给 P0/P1/P2 comments,最后 `ALL_CLEAR`。
+- `Question`: 问题。适合需要回答但不一定立项的内容。
+- `Broadcast`: 公告。适合通知全群,不要用它暗中派活。
+
+如果你只做闲聊群,默认停在 `Chat` 即可。如果你做工作群,建议把 `Task`
+和 `Review` 放在最容易点到的位置,并在任务详情页显示 ACK 状态、P0/P1/P2
+和 `ALL_CLEAR`。
 
 ## 说明
 

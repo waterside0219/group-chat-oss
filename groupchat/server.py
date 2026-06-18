@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -112,6 +113,8 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_tasks()
         elif route == "/group/deliveries":
             self._handle_group_deliveries()
+        elif route.startswith("/group/thread/"):
+            self._handle_group_thread(route)
         elif route in {"/group/list", "/group/history"}:
             self._handle_group_history()
         elif route == "/group/poll":
@@ -134,7 +137,7 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_send(body)
         elif route == "/group/append":
             self._handle_group_append(body)
-        elif route in {"/group/reply", "/mcp/seashore/group-reply"}:
+        elif route in {"/group/reply", "/mcp/groupchat/group-reply"}:
             self._handle_group_reply(body)
         elif route == "/group/ack":
             self._handle_group_ack(body)
@@ -142,6 +145,8 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._handle_group_dispatch_state(body)
         elif route == "/group/typing":
             self._handle_group_typing(body)
+        elif route.startswith("/group/thread/") and route.endswith("/comment"):
+            self._handle_group_thread_comment(route, body)
         elif route == "/group/delete":
             self._handle_group_delete(body)
         elif route == "/group/clear":
@@ -312,10 +317,20 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             "delivered": [],
             "failed": [],
         }
+        if targets:
+            deadline_seconds = int(body.get("ack_deadline_seconds") or 300)
+            delivery.update(
+                {
+                    "ack_required": True,
+                    "ack_targets": targets,
+                    "ack_deadline_seconds": deadline_seconds,
+                    "escalate_to": body.get("escalate_to") or None,
+                }
+            )
         meta = {}
         if client_msg_id:
             meta["client_msg_id"] = client_msg_id
-        message_type = str(body.get("message_type") or "chat").strip().lower()
+        message_type = str(body.get("message_type") or body.get("kind") or "chat").strip().lower()
         owner = str(body.get("owner") or "").strip() or self._infer_group_task_owner(body, mentions)
         priority = str(body.get("priority") or "").strip() or None
         try:
@@ -363,6 +378,12 @@ class GroupChatHandler(BaseHTTPRequestHandler):
         room_id = str(body.get("room_id") or "main").strip() or "main"
         turn_id = str(body.get("turn_id") or "").strip() or None
         message_type = str(body.get("message_type") or "chat").strip().lower()
+        parent_task_id = str(body.get("parent_task_id") or "").strip() or self._parent_task_id(body.get("parent_msg_id"))
+        meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+        inferred_type, inferred_meta = self._infer_review_comment(text, parent_task_id)
+        if inferred_type and (not body.get("message_type") or message_type == "chat"):
+            message_type = inferred_type
+        meta.update(inferred_meta)
         owner = str(body.get("owner") or "").strip() or self._infer_group_task_owner(body, mentions)
         priority = str(body.get("priority") or "").strip() or None
         hop_count = int(body.get("hop_count", 0) or 0)
@@ -378,13 +399,13 @@ class GroupChatHandler(BaseHTTPRequestHandler):
                 parent_msg_id=body.get("parent_msg_id") or None,
                 reply_to=body.get("reply_to") or None,
                 delivery={"targets": targets, "delivered": [], "failed": []},
-                meta={"loop_depth": hop_count},
+                meta={"loop_depth": hop_count, **meta},
                 turn_id=turn_id,
                 bubble_index=self._optional_int(body.get("bubble_index")),
                 bubble_count=self._optional_int(body.get("bubble_count")),
                 message_type=message_type,
                 task_id=str(body.get("task_id") or "").strip() or None,
-                parent_task_id=str(body.get("parent_task_id") or "").strip() or None,
+                parent_task_id=parent_task_id,
                 owner=owner,
                 priority=priority,
             )
@@ -418,6 +439,15 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": f"missing required field(s): {', '.join(missing)}"})
             return
         payload = dict(body)
+        parent_task_id = str(body.get("parent_task_id") or "").strip() or self._parent_task_id(parent_msg_id)
+        inferred_type, inferred_meta = self._infer_review_comment(text, parent_task_id)
+        if inferred_type and not payload.get("message_type"):
+            payload["message_type"] = inferred_type
+        if parent_task_id and not payload.get("parent_task_id"):
+            payload["parent_task_id"] = parent_task_id
+        if inferred_meta:
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            payload["meta"] = {**meta, **inferred_meta}
         payload.update({
             "sender_id": agent_id,
             "route": route,
@@ -446,6 +476,42 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             "text": str(body.get("text") or "ACK").strip() or "ACK",
             "message_type": "ack",
             "source": body.get("source") or f"ack:{agent_id}",
+        }
+        self._handle_group_append(payload)
+
+    def _handle_group_thread(self, route: str):
+        task_id = route.rstrip("/").split("/")[-1]
+        if not task_id:
+            self._send_json(400, {"ok": False, "error": "thread id required"})
+            return
+        for task in self.state.group_chat.tasks_summary().get("tasks", []):
+            if task.get("task_id") == task_id:
+                self._send_json(200, {"ok": True, "thread": task})
+                return
+        self._send_json(404, {"ok": False, "error": "thread not found"})
+
+    def _handle_group_thread_comment(self, route: str, body: dict[str, Any]):
+        task_id = route.rstrip("/").split("/")[-2]
+        sender_id = str(body.get("sender_id") or body.get("agent_id") or "").strip()
+        text = str(body.get("text") or "").strip()
+        if not task_id or not sender_id or not text:
+            self._send_json(400, {"ok": False, "error": "thread id, sender_id, and text required"})
+            return
+        message_type = str(body.get("message_type") or "").strip().lower()
+        meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+        inferred_type, inferred_meta = self._infer_review_comment(text, task_id)
+        message_type = message_type or inferred_type or "progress"
+        meta.update(inferred_meta)
+        payload = {
+            "sender_id": sender_id,
+            "route": "group",
+            "room_id": str(body.get("room_id") or "main"),
+            "text": text,
+            "parent_task_id": task_id,
+            "parent_msg_id": body.get("parent_msg_id") or None,
+            "message_type": message_type,
+            "meta": meta,
+            "source": body.get("source") or f"thread-comment:{sender_id}",
         }
         self._handle_group_append(payload)
 
@@ -504,6 +570,26 @@ class GroupChatHandler(BaseHTTPRequestHandler):
             if agent_id in reply_agents:
                 return agent_id
         return None
+
+    def _parent_task_id(self, parent_msg_id: Any) -> str | None:
+        parent_id = str(parent_msg_id or "").strip()
+        if not parent_id:
+            return None
+        parent = self.state.group_chat.find_record(parent_id)
+        if not parent:
+            return None
+        return str(parent.get("task_id") or parent.get("parent_task_id") or "").strip() or None
+
+    def _infer_review_comment(self, text: str, parent_task_id: str | None) -> tuple[str | None, dict[str, Any]]:
+        if not parent_task_id:
+            return None, {}
+        upper = text.upper()
+        if re.search(r"(?m)^\s*(?:@\S+\s+)?ALL_CLEAR\b", upper):
+            return "review_clear", {"all_clear": True}
+        match = re.search(r"(?m)^\s*(?:\*\*)?(P0|P1|P2)\b", upper)
+        if match:
+            return "progress", {"severity": match.group(1)}
+        return None, {}
 
     def _handle_group_delete(self, body: dict[str, Any]):
         msg_id = str(body.get("id") or "").strip()

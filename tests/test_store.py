@@ -122,6 +122,59 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(done["acknowledged"][0]["ack_message_id"], ack["id"])
             self.assertEqual(store.tasks_summary(room_id="work")["delivery_counts"]["acknowledged"], 1)
 
+    def test_review_request_thread_comments_and_all_clear(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = make_store(Path(td))
+            review = store.append(
+                "you",
+                "review this @assistant-a",
+                room_id="code",
+                mentions=["assistant-a"],
+                message_type="review_request",
+                owner="assistant-a",
+            )
+            self.assertTrue(review["task_id"].startswith("task_"))
+            store.append(
+                "assistant-a",
+                "P0 missing ack path",
+                room_id="code",
+                parent_msg_id=review["id"],
+                parent_task_id=review["task_id"],
+                message_type="progress",
+                meta={"severity": "P0"},
+            )
+            mid = store.tasks_summary(room_id="code")["tasks"][0]
+            self.assertEqual(mid["status"], "waiting_review")
+            self.assertEqual(mid["severity_summary"]["P0"], 1)
+            self.assertEqual(mid["comments"][0]["severity"], "P0")
+
+            store.append(
+                "assistant-a",
+                "ALL_CLEAR no findings remain",
+                room_id="code",
+                parent_task_id=review["task_id"],
+                message_type="review_clear",
+                meta={"all_clear": True},
+            )
+            done = store.tasks_summary(room_id="code")["tasks"][0]
+            self.assertEqual(done["status"], "resolved")
+            self.assertEqual(done["all_clear_by"], ["assistant-a"])
+
+    def test_mark_reminded_sets_delivery_timestamp(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = make_store(Path(td))
+            msg = store.append(
+                "you",
+                "please ack @assistant-a",
+                room_id="work",
+                mentions=["assistant-a"],
+                delivery={"targets": ["assistant-a"], "delivered": [], "failed": []},
+            )
+            now = datetime.fromisoformat(msg["ts"]) + timedelta(seconds=301)
+            self.assertTrue(store.mark_reminded(msg["id"], "assistant-a", now=now))
+            overdue = store.delivery_summary(room_id="work", ack_timeout_seconds=300, now=now)
+            self.assertEqual(overdue["overdue"][0]["reminded_at"], now.isoformat(timespec="milliseconds"))
+
     def test_context_filters_agent_tool_trace(self):
         with tempfile.TemporaryDirectory() as td:
             store = make_store(Path(td))

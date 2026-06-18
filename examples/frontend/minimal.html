@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>groupchat-oss minimal frontend</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; max-width: 860px; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  input, select, textarea, button { font: inherit; box-sizing: border-box; }
+  input, select, textarea { width: 100%; padding: 8px; }
+  textarea { min-height: 80px; }
+  button { margin-top: 12px; padding: 8px 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .msg { border-bottom: 1px solid #ddd; padding: 8px 0; }
+  .meta { color: #666; font-size: 12px; }
+</style>
+<body>
+  <h1>groupchat-oss minimal frontend</h1>
+
+  <div class="row">
+    <div>
+      <label>Server URL</label>
+      <input id="server" value="http://127.0.0.1:8795">
+    </div>
+    <div>
+      <label>Token</label>
+      <input id="token" value="change-me">
+    </div>
+    <div>
+      <label>Room</label>
+      <select id="room">
+        <option value="work">work</option>
+        <option value="casual">casual</option>
+        <option value="code">code</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>Sender ID</label>
+      <input id="sender" value="you">
+    </div>
+    <div>
+      <label>Kind</label>
+      <select id="kind">
+        <option value="chat">chat</option>
+        <option value="task">task</option>
+        <option value="review_request">review_request</option>
+        <option value="question">question</option>
+        <option value="broadcast">broadcast</option>
+      </select>
+    </div>
+    <div>
+      <label>Mentions</label>
+      <input id="mentions" placeholder="assistant-a,assistant-b">
+    </div>
+  </div>
+
+  <label>Message</label>
+  <textarea id="text" placeholder="Write a message"></textarea>
+  <button id="send">Send</button>
+  <button id="refresh">Refresh</button>
+
+  <h2>History</h2>
+  <div id="history"></div>
+
+<script>
+async function api(path, options = {}) {
+  const server = document.querySelector("#server").value.replace(/\/$/, "");
+  const token = document.querySelector("#token").value;
+  const headers = {"X-Auth-Token": token, ...(options.headers || {})};
+  const res = await fetch(server + path, {...options, headers});
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function refresh() {
+  const room = encodeURIComponent(document.querySelector("#room").value);
+  const data = await api(`/group/history?room_id=${room}&limit=50`);
+  const rows = data.records || data.messages || [];
+  document.querySelector("#history").innerHTML = rows.map((msg) => `
+    <div class="msg">
+      <div class="meta">${msg.ts || ""} · ${msg.sender_id || "?"} · ${msg.message_type || "chat"} · ${msg.id}</div>
+      <div>${escapeHtml(msg.text || "")}</div>
+    </div>
+  `).join("");
+}
+
+async function send() {
+  const kind = document.querySelector("#kind").value;
+  const payload = {
+    route: "group",
+    room_id: document.querySelector("#room").value,
+    sender_id: document.querySelector("#sender").value,
+    text: document.querySelector("#text").value,
+    mentions: document.querySelector("#mentions").value,
+    message_type: kind,
+    kind,
+  };
+  await api("/group/send", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  document.querySelector("#text").value = "";
+  await refresh();
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+
+document.querySelector("#send").addEventListener("click", send);
+document.querySelector("#refresh").addEventListener("click", refresh);
+refresh().catch(console.error);
+</script>
+</body>
+</html>

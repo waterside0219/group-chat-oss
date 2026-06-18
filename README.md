@@ -10,6 +10,8 @@ The code is configured with neutral member ids and names. Edit `roster.example.t
 
 For the full data flow, adapter model, watchdog/heartbeat patterns, and the
 audit against the original deployment, see `docs/ARCHITECTURE.md`.
+For a copy-paste self-hosted deployment with work/casual/code rooms, tmux AI,
+Telegram, and custom frontend examples, see `docs/DEPLOY_SELF_HOSTED.md`.
 
 ## Quickstart
 
@@ -33,6 +35,14 @@ curl -s -H "X-Auth-Token: $TOKEN" \
   -d '{"sender_id":"you","text":"hello @assistant-a"}' \
   http://127.0.0.1:8795/group/send | python -m json.tool
 curl -s -H "X-Auth-Token: $TOKEN" http://127.0.0.1:8795/group/history | python -m json.tool
+```
+
+For a human-friendly bridge script:
+
+```bash
+python examples/bridges/group_bridge.py --room-id work \
+  send "Review this patch @assistant-a" \
+  --kind review_request --mentions assistant-a --wait 30
 ```
 
 An external agent can reply without tmux:
@@ -64,7 +74,7 @@ curl -s -H "X-Auth-Token: $TOKEN" \
   http://127.0.0.1:8795/group/reply | python -m json.tool
 ```
 
-`/mcp/seashore/group-reply` is also accepted as a compatibility alias for local
+`/mcp/groupchat/group-reply` is also accepted as a compatibility alias for local
 MCP-style bridges. The required fields are `route="group"`, `room_id`,
 `agent_id`, `parent_msg_id`, `turn_id`, and `text`.
 
@@ -87,6 +97,13 @@ same field:
 groupchat --token-file ~/.groupchat/token --room-id casual send "morning"
 groupchat --token-file ~/.groupchat/token --room-id code history --limit 20
 ```
+
+The repository includes copyable integration examples:
+
+- `examples/bridges/group_bridge.py`: generic shell/custom frontend bridge.
+- `examples/bridges/telegram_bot.py`: Telegram long-polling bridge.
+- `examples/frontend/minimal.html`: tiny browser frontend with a 5-kind picker.
+- `examples/ios-swiftui/GroupChatDemo.swift`: SwiftUI reference input bar.
 
 ## How A Workgroup Should Behave
 
@@ -113,6 +130,33 @@ In practice:
 groupchat --token-file ~/.groupchat/token --room-id work deliveries
 groupchat --token-file ~/.groupchat/token --room-id work \
   ack --agent-id assistant-a --parent-msg-id grp_... --text "I am taking this"
+```
+
+## Message Kinds
+
+Clients should expose these five user-facing kinds instead of sending
+everything as plain chat:
+
+- `chat`: ordinary conversation. Use this in casual rooms and for low-pressure
+  discussion.
+- `task`: actionable work. It creates a task id, owner, priority, delivery
+  expectation, and task-board row.
+- `review_request`: asks a named reviewer to inspect code, docs, migrations, or
+  operational steps. It stays `waiting_review` until the reviewer posts
+  `ALL_CLEAR`.
+- `question`: direct question. It expects an answer but does not create a task
+  board item by default.
+- `broadcast`: announcement to the room. Use sparingly; do not use it as a
+  hidden task assignment.
+
+The lower-level API still accepts legacy task update types such as `progress`,
+`block`, `ship`, and `review_clear`, but end-user input bars should present the
+five kinds above.
+
+```bash
+groupchat --token-file ~/.groupchat/token --room-id code \
+  send "Please review the ACK patch @assistant-a" \
+  --kind review_request --priority p0 --owner assistant-a
 ```
 
 ## Task Board And P0/P1/P2
@@ -151,6 +195,41 @@ curl -s -H "X-Auth-Token: $TOKEN" \
 
 The task board response also includes `delivery_counts`. If `overdue > 0`, the
 workgroup has mentioned someone who has not acknowledged or replied in time.
+
+## Review Request Loop And ALL_CLEAR
+
+Use `review_request` when the next step is not implementation but review. A
+healthy loop is:
+
+1. Sender posts a `review_request` and mentions the reviewer.
+2. Reviewer ACKs within five minutes.
+3. Reviewer posts comments. Findings should start with `P0`, `P1`, or `P2` so
+   clients can summarize severity.
+4. Author fixes all `P0` issues and asks for re-review under the same thread.
+5. Reviewer posts a line starting with `ALL_CLEAR` only when the thread is clean.
+
+`GET /group/thread/<task_id>` returns the review thread with `comments`,
+`severity_summary`, `all_clear_by`, and `status`. A review request is
+`waiting_review` until `ALL_CLEAR`, then becomes `resolved`.
+
+```bash
+groupchat --token-file ~/.groupchat/token --room-id code \
+  comment task_... "P0 ACK endpoint returns success after append failure" \
+  --sender-id assistant-a --severity P0
+
+groupchat --token-file ~/.groupchat/token --room-id code \
+  comment task_... "ALL_CLEAR reviewed again, no blocking findings remain" \
+  --sender-id assistant-a
+```
+
+Reminder automation can inspect overdue ACKs without mutating state:
+
+```bash
+groupchat-ack-reminder --config config.example.toml --room-id work --json
+```
+
+Add `--apply` only when you want it to append reminder records and mark the
+target as recently reminded.
 
 ## Webhook Agents
 
@@ -231,7 +310,7 @@ groupchat --token-file ~/.groupchat/token history --limit 10
 
 GET: `/health`, `/version`, `/group/roster`, `/group/status`, `/group/tasks`, `/group/deliveries`, `/group/list`, `/group/history`, `/group/poll`, `/group/stats`.
 
-POST: `/group/send`, `/group/append`, `/group/reply`, `/group/ack`, `/mcp/seashore/group-reply`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
+POST: `/group/send`, `/group/append`, `/group/reply`, `/group/ack`, `/mcp/groupchat/group-reply`, `/group/dispatch-state`, `/group/typing`, `/group/delete`, `/group/clear`.
 
 ## Stage One Scope
 

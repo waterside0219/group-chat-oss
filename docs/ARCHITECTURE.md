@@ -2,7 +2,7 @@
 
 This document explains how `groupchat-oss` runs a workgroup chat, how agents are
 woken up, and how replies come back into the shared message log. It also records
-the differences between this open-source package and the original Seashore
+the differences between this open-source package and the original private
 deployment it was extracted from.
 
 ## What The Core Server Owns
@@ -45,6 +45,24 @@ responder, and can fan out with `@all`. Agents must explicitly mention another
 agent to hand off work. Agent `@all` is intentionally ignored, and
 `hop_count >= 3` stops further fan-out.
 
+## Work Room And Casual Room Architecture
+
+The project intentionally keeps one neutral server and separates behavior by
+`room_id` and `message_type`:
+
+- Workgroup rooms use `task`, `review_request`, `question`, and `broadcast`.
+  They rely on delivery tracking, five-minute ACK discipline, P0/P1/P2 severity,
+  and explicit `ALL_CLEAR` for review closure.
+- Casual rooms mostly use `chat` and `question`. They can still mention an
+  agent, but they should not silently create work unless the user chooses
+  `task` or `review_request`.
+- Code/review rooms are a workgroup specialization. They should preserve parent
+  message ids, task ids, comments, severity, and final review sign-off.
+
+This split lets a client show different input controls without running separate
+servers. A mobile app can expose a segmented control with:
+`chat / task / review_request / question / broadcast`.
+
 ## REST API Surface
 
 The standalone server exposes the same workgroup API family as the original
@@ -64,7 +82,7 @@ system:
 - `POST /group/append`
 - `POST /group/reply`
 - `POST /group/ack`
-- `POST /mcp/seashore/group-reply`
+- `POST /mcp/groupchat/group-reply`
 - `POST /group/dispatch-state`
 - `POST /group/typing`
 - `POST /group/delete`
@@ -130,6 +148,31 @@ The server infers `owner` from an explicit `owner`, `assignee`, or
 `assigned_to` field. If those are absent, the first mentioned reply-capable agent
 becomes the owner.
 
+## Review Threads
+
+`message_type = "review_request"` creates a task-like review thread with status
+`waiting_review`. Review comments can be posted with `POST
+/group/thread/<task_id>/comment`, `POST /group/append`, or `POST /group/reply`
+as long as `parent_task_id` is present or can be inherited from
+`parent_msg_id`.
+
+The server recognizes only strict review markers:
+
+- A line starting with `P0`, `P1`, or `P2` marks the comment severity.
+- A line starting with `ALL_CLEAR` marks the reviewer as cleared and moves the
+  thread to `resolved`.
+
+Mentions of those words inside ordinary prose do not count. This prevents an ACK
+such as "I will send ALL_CLEAR later if there are no P0s" from resolving the
+thread early.
+
+`GET /group/thread/<task_id>` returns the thread summary including:
+
+- `comments`
+- `severity_summary`
+- `all_clear_by`
+- `status`
+
 ## Delivery And Acknowledgement Loop
 
 Mentioning or dispatching an agent is not treated as completion. Any message
@@ -151,6 +194,11 @@ The task board includes `delivery_counts` so a UI can show when work is blocked
 because a responsible agent did not pick it up. Deployments should escalate
 `overdue` items to a fallback reviewer or the human instead of letting the work
 silently disappear.
+
+The included `groupchat-ack-reminder` command can run from cron or launchd. It
+defaults to reporting overdue ACKs. With `--apply`, it appends a reminder record
+and writes a `reminded_at` marker so the same overdue item is not reminded on
+every run.
 
 ## Rooms And Reply Contracts
 
@@ -180,8 +228,8 @@ The endpoint stores the reply as a normal group record with
 `sender_id = agent_id`. Optional `bubble_index` and `bubble_count` support
 multi-bubble replies while preserving the same parent and turn id.
 
-`POST /mcp/seashore/group-reply` is a compatibility alias for deployments that
-already expose a local MCP route with that path. It does not add Seashore-specific
+`POST /mcp/groupchat/group-reply` is a compatibility alias for deployments that
+already expose a local MCP route with that path. It does not add product-specific
 storage requirements; it maps into the same neutral group record shape.
 
 ## Dispatcher Options
@@ -208,6 +256,11 @@ For each target agent, it:
 
 This mirrors the original deployment's `bus_send.py` pattern, but uses neutral
 roster-driven session names and file prefixes.
+
+The tmux dispatcher uses a named paste buffer per message/session so concurrent
+dispatches do not overwrite tmux's default buffer. Its injected protocol also
+reminds agents to ACK within five minutes, use the five message kinds, and use
+line-start `P0/P1/P2` and `ALL_CLEAR` for reviews.
 
 ### Webhook Dispatcher
 
@@ -379,7 +432,7 @@ built on top of the same workgroup APIs.
 3. A deployment relay script can also post the decision request to private chat,
    so the human receives it in the primary conversation and notification path.
 
-## Audit Against The Original Seashore System
+## Audit Against The Original Private System
 
 The open-source package matches the original group-chat behavior in the areas
 that should be portable:
@@ -398,7 +451,7 @@ that should be portable:
 - `message_type` drives the task-board state machine.
 - `priority = p0/p1/p2` drives task-board ordering and priority counts.
 - `room_id` keeps work, casual, and code timelines separate in the same server.
-- `/group/reply` and `/mcp/seashore/group-reply` require a deterministic
+- `/group/reply` and `/mcp/groupchat/group-reply` require a deterministic
   group-reply contract with `route`, `room_id`, `agent_id`, `parent_msg_id`,
   `turn_id`, and `text`.
 - Context lines are filtered to avoid injecting prior tool traces or protocol

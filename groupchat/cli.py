@@ -46,12 +46,15 @@ def main(argv: list[str] | None = None):
     deliveries.add_argument("--ack-timeout-seconds", type=int, default=300)
     hist = sub.add_parser("history")
     hist.add_argument("--limit", type=int, default=20)
+    thread = sub.add_parser("thread")
+    thread.add_argument("task_id")
 
     send = sub.add_parser("send")
     send.add_argument("text")
     send.add_argument("--sender-id", default="you")
     send.add_argument("--mentions", default="")
     send.add_argument("--message-type", default="chat")
+    send.add_argument("--kind", default="")
     send.add_argument("--turn-id", default="")
     send.add_argument("--priority", default="")
     send.add_argument("--task-id", default="")
@@ -66,6 +69,7 @@ def main(argv: list[str] | None = None):
     append.add_argument("--parent-msg-id", default="")
     append.add_argument("--turn-id", default="")
     append.add_argument("--message-type", default="chat")
+    append.add_argument("--kind", default="")
     append.add_argument("--priority", default="")
     append.add_argument("--task-id", default="")
     append.add_argument("--parent-task-id", default="")
@@ -86,6 +90,13 @@ def main(argv: list[str] | None = None):
     ack.add_argument("--turn-id", default="")
     ack.add_argument("--text", default="ACK")
 
+    comment = sub.add_parser("comment")
+    comment.add_argument("task_id")
+    comment.add_argument("text")
+    comment.add_argument("--sender-id", required=True)
+    comment.add_argument("--message-type", default="")
+    comment.add_argument("--severity", choices=["P0", "P1", "P2", "p0", "p1", "p2"], default="")
+
     args = parser.parse_args(argv)
     token = read_token(args.token, args.token_file)
 
@@ -103,6 +114,8 @@ def main(argv: list[str] | None = None):
     elif args.cmd == "history":
         path = "/group/history?" + parse.urlencode({"limit": args.limit, "room_id": args.room_id})
         print(json.dumps(http_json(args.base_url, "GET", path, token), ensure_ascii=False, indent=2))
+    elif args.cmd == "thread":
+        print(json.dumps(http_json(args.base_url, "GET", f"/group/thread/{parse.quote(args.task_id)}", token), ensure_ascii=False, indent=2))
     elif args.cmd == "send":
         body = {
             "sender_id": args.sender_id,
@@ -110,7 +123,7 @@ def main(argv: list[str] | None = None):
             "room_id": args.room_id,
             "text": args.text,
             "mentions": args.mentions,
-            "message_type": args.message_type,
+            "message_type": args.kind or args.message_type,
             "turn_id": args.turn_id,
             "priority": args.priority,
             "task_id": args.task_id,
@@ -140,7 +153,7 @@ def main(argv: list[str] | None = None):
             "mentions": args.mentions,
             "parent_msg_id": args.parent_msg_id,
             "turn_id": args.turn_id,
-            "message_type": args.message_type,
+            "message_type": args.kind or args.message_type,
             "priority": args.priority,
             "task_id": args.task_id,
             "parent_task_id": args.parent_task_id,
@@ -172,6 +185,18 @@ def main(argv: list[str] | None = None):
             "text": args.text,
         }
         print(json.dumps(http_json(args.base_url, "POST", "/group/ack", token, body), ensure_ascii=False, indent=2))
+    elif args.cmd == "comment":
+        meta: dict[str, Any] = {}
+        if args.severity:
+            meta["severity"] = args.severity.upper()
+        body = {
+            "room_id": args.room_id,
+            "sender_id": args.sender_id,
+            "text": args.text,
+            "message_type": args.message_type,
+            "meta": meta,
+        }
+        print(json.dumps(http_json(args.base_url, "POST", f"/group/thread/{parse.quote(args.task_id)}/comment", token, body), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
