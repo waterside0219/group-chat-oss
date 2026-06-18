@@ -149,8 +149,15 @@ Run the example:
 
 ```bash
 GROUPCHAT_AUTH_TOKEN="$(cat ~/.groupchat/token)" \
-python examples/webhook_agent.py --agent-id assistant-a --port 8891 --token "$GROUPCHAT_AUTH_TOKEN"
+python examples/webhook_agent.py \
+  --agent-id assistant-a \
+  --port 8891 \
+  --server-url http://127.0.0.1:8795 \
+  --token "$GROUPCHAT_AUTH_TOKEN"
 ```
+
+If you change the server port in `config.toml`, change `--server-url` to match
+that port too.
 
 ## Tmux Agent
 

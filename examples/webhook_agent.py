@@ -37,9 +37,11 @@ class WebhookAgentHandler(BaseHTTPRequestHandler):
         message = body.get("message") or {}
         text = str(message.get("text") or "")
         reply = {
+            "route": message.get("route") or "group",
+            "room_id": message.get("room_id") or "main",
             "sender_id": self.agent_id,
-            "text": f"received: {text}",
             "parent_msg_id": message.get("id"),
+            "text": f"received: {text}",
             "source": f"webhook:{self.agent_id}",
         }
         data = json.dumps(reply).encode("utf-8")

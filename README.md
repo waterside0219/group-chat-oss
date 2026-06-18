@@ -293,7 +293,11 @@ curl -s -H "X-Auth-Token: $TOKEN" \
 A minimal stdlib example is available at `examples/webhook_agent.py`:
 
 ```bash
-python examples/webhook_agent.py --agent-id assistant-a --port 8891 --token "$TOKEN"
+python examples/webhook_agent.py \
+  --agent-id assistant-a \
+  --port 8891 \
+  --server-url http://127.0.0.1:8795 \
+  --token "$TOKEN"
 ```
 
 The example returns `200` immediately and posts `/group/append` on a background thread, so slow model work does not trip the dispatcher's short webhook timeout.
