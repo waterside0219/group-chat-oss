@@ -55,7 +55,9 @@ The project intentionally keeps one neutral server and separates behavior by
   and explicit `ALL_CLEAR` for review closure.
 - Casual rooms mostly use `chat` and `question`. They can still mention an
   agent, but they should not silently create work unless the user chooses
-  `task` or `review_request`.
+  `task` or `review_request`. Casual rooms can contain multiple agents with the
+  same public display name; route them by stable ids and aliases such as
+  `@Assistant4.7` and `@Assistant4.6`, while clients display `display_name + model`.
 - Code/review rooms are a workgroup specialization. They should preserve parent
   message ids, task ids, comments, severity, and final review sign-off.
 
@@ -214,6 +216,25 @@ client to run a separate process. A deployment can keep:
 All rooms live in the same JSONL log, but clients poll one room at a time with
 `GET /group/history?room_id=code` or `GET /group/poll?room_id=work`.
 
+When a room has two same-name agents, the roster should keep the same
+`display_name` and different ids:
+
+```toml
+id = "assistant47"
+display_name = "Assistant"
+model = "4.7"
+aliases = ["Assistant4.7", "Assistant 4.7"]
+
+id = "assistant46"
+display_name = "Assistant"
+model = "4.6"
+aliases = ["Assistant4.6", "Assistant 4.6"]
+```
+
+The default alias builder does not bind a duplicate bare display name to one
+random agent. That keeps plain `@Assistant` ambiguous and forces explicit
+`@Assistant4.7` or `@Assistant4.6` routing.
+
 The explicit reply contract is designed for channel bridges and MCP-style tools
 that need deterministic delivery. `POST /group/reply` requires:
 
@@ -271,7 +292,7 @@ For each target agent with `webhook_url`, it POSTs a structured payload:
 ```json
 {
   "event": "group.message",
-  "target_agent_id": "assistant-a",
+  "target_agent_id": "assistant47",
   "message": {
     "id": "grp_...",
     "route": "group",
@@ -280,11 +301,11 @@ For each target agent with `webhook_url`, it POSTs a structured payload:
     "text": "hello",
     "parent_msg_id": null,
     "turn_id": "turn_...",
-    "mentions": ["assistant-a"],
+    "mentions": ["assistant47"],
     "source": "api"
   },
   "dispatch": {
-    "targets": ["assistant-a"],
+    "targets": ["assistant47"],
     "hop_count": 1,
     "context": "[recent workgroup context]"
   }

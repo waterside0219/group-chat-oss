@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 
 class WebhookAgentHandler(BaseHTTPRequestHandler):
-    agent_id = "assistant-a"
+    agent_id = "assistant47"
     server_url = "http://127.0.0.1:8795"
     auth_token = ""
 
@@ -62,7 +62,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8891)
-    parser.add_argument("--agent-id", default=os.environ.get("GROUPCHAT_AGENT_ID", "assistant-a"))
+    parser.add_argument("--agent-id", default=os.environ.get("GROUPCHAT_AGENT_ID", "assistant47"))
     parser.add_argument("--server-url", default=os.environ.get("GROUPCHAT_SERVER_URL", "http://127.0.0.1:8795"))
     parser.add_argument("--token", default=os.environ.get("GROUPCHAT_AUTH_TOKEN", "change-me"))
     args = parser.parse_args()

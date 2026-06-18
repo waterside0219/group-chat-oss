@@ -8,31 +8,31 @@ can_reply = false
 aliases = ["you", "me", "user"]
 
 [[members]]
-id = "assistant-a"
-display_name = "Assistant A"
+id = "assistant47"
+display_name = "Assistant"
 kind = "agent"
 avatar = "A"
 color = "orange"
-model = "local-agent"
-tmux = ""
+model = "4.7"
+tmux = "assistant47"
 webhook_url = ""
 webhook_status_url = ""
 can_reply = true
 default_responder = true
-aliases = ["assistant-a", "a", "assistant"]
+aliases = ["assistant47", "Assistant4.7", "Assistant 4.7", "4.7"]
 
 [[members]]
-id = "assistant-b"
-display_name = "Assistant B"
+id = "assistant46"
+display_name = "Assistant"
 kind = "agent"
 avatar = "B"
 color = "blue"
-model = "local-agent"
-tmux = ""
+model = "4.6"
+tmux = "assistant46"
 webhook_url = ""
 webhook_status_url = ""
 can_reply = true
-aliases = ["assistant-b", "b"]
+aliases = ["assistant46", "Assistant4.6", "Assistant 4.6", "4.6"]
 
 [mentions]
-all = ["all", "__all__", "everyone", "team"]
+all = ["all", "__all__", "everyone", "team", "全员"]

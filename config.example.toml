@@ -5,7 +5,7 @@ strict_auth = true
 
 [auth]
 # Prefer GROUPCHAT_AUTH_TOKEN in production. token_file is convenient for local curl/CLI.
-token = "change-me"
+token = ""
 token_file = "~/.groupchat/token"
 
 [storage]

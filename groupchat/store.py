@@ -34,7 +34,9 @@ TASK_STATUS_BY_MESSAGE_TYPE = {
 }
 PRIORITIES = {"p0", "p1", "p2"}
 PRIORITY_RANK = {"p0": 0, "p1": 1, "p2": 2, None: 3}
-MENTION_RE = re.compile(r"@([A-Za-z0-9_\-]+|[\u4e00-\u9fff]+)")
+MENTION_RE = re.compile(
+    r"@([A-Za-z][A-Za-z0-9_.-]*(?:\s*\d+(?:[._]\d+)?)?|[\u4e00-\u9fff]+(?:\s*(?:[A-Za-z]|\d+(?:[._]\d+)?))?)"
+)
 DEFAULT_ACK_TIMEOUT_SECONDS = 300
 
 

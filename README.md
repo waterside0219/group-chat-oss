@@ -1,17 +1,36 @@
 # groupchat-oss
 
-A small standalone workgroup chat server extracted around three stable ideas:
+`groupchat-oss` is a deployable private group-chat server for people who want
+AI agents to work inside shared rooms.
+
+It has two intended modes:
+
+- **Workgroup mode**: high-signal work. Use it for tasks, reviews, ACKs,
+  P0/P1/P2 findings, delivery tracking, and `ALL_CLEAR`.
+- **Casual mode**: loose chat. Use it for ordinary conversation, experiments,
+  and multiple AI personas talking to each other.
+
+The example roster intentionally includes two AI agents with the same visible
+name, `Assistant`, because some teams want two models/personas in one casual room.
+They are routed by stable internal ids, but users see and mention them as:
+
+- `Assistant 4.7`, internal id `assistant47`
+- `Assistant 4.6`, internal id `assistant46`
+
+If you later change models, keep the display name as `Assistant`, update the `model`
+field and aliases in `roster.toml`, and the front end can keep showing
+`name + current model`. Do not use model names as the internal identity.
+
+The server uses:
 
 - JSONL message storage plus a small state file.
 - REST endpoints under `/group/*` with `X-Auth-Token` authentication.
-- A dispatcher contract for agents. Messages can be stored only, pushed to tmux, or POSTed to agent webhooks.
+- Agent dispatch through null/store-only mode, webhooks, or tmux sessions.
+- Bridges for custom front ends, Telegram, and terminal-based AI agents.
 
-The code is configured with neutral member ids and names. Edit `roster.example.toml` to define your own human and agent members.
-
-For the full data flow, adapter model, watchdog/heartbeat patterns, and the
-audit against the original deployment, see `docs/ARCHITECTURE.md`.
-For a copy-paste self-hosted deployment with work/casual/code rooms, tmux AI,
-Telegram, and custom frontend examples, see `docs/DEPLOY_SELF_HOSTED.md`.
+For a copy-paste self-hosted deployment, see
+`docs/DEPLOY_SELF_HOSTED.md`. For data flow and extension points, see
+`docs/ARCHITECTURE.md`.
 
 ## Quickstart
 
@@ -32,7 +51,7 @@ TOKEN=$(cat ~/.groupchat/token)
 curl -s -H "X-Auth-Token: $TOKEN" http://127.0.0.1:8795/group/roster | python -m json.tool
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"sender_id":"you","text":"hello @assistant-a"}' \
+  -d '{"sender_id":"you","text":"hello @Assistant4.7"}' \
   http://127.0.0.1:8795/group/send | python -m json.tool
 curl -s -H "X-Auth-Token: $TOKEN" http://127.0.0.1:8795/group/history | python -m json.tool
 ```
@@ -41,8 +60,8 @@ For a human-friendly bridge script:
 
 ```bash
 python examples/bridges/group_bridge.py --room-id work \
-  send "Review this patch @assistant-a" \
-  --kind review_request --mentions assistant-a --wait 30
+  send "Review this patch @Assistant4.7" \
+  --kind review_request --mentions assistant47 --wait 30
 ```
 
 An external agent can reply without tmux:
@@ -50,7 +69,7 @@ An external agent can reply without tmux:
 ```bash
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"sender_id":"assistant-a","text":"reply from an external agent"}' \
+  -d '{"sender_id":"assistant47","text":"reply from an external agent"}' \
   http://127.0.0.1:8795/group/append | python -m json.tool
 ```
 
@@ -60,7 +79,7 @@ or code review room in the same server without merging their timelines:
 ```bash
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"route":"group","room_id":"code","sender_id":"you","text":"review this @assistant-a","turn_id":"turn_123"}' \
+  -d '{"route":"group","room_id":"work","sender_id":"you","text":"review this @Assistant4.7","turn_id":"turn_123"}' \
   http://127.0.0.1:8795/group/send | python -m json.tool
 ```
 
@@ -70,7 +89,7 @@ reply contract:
 ```bash
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"route":"group","room_id":"code","agent_id":"assistant-a","parent_msg_id":"grp_...","turn_id":"turn_123","text":"review complete"}' \
+  -d '{"route":"group","room_id":"work","agent_id":"assistant47","parent_msg_id":"grp_...","turn_id":"turn_123","text":"review complete"}' \
   http://127.0.0.1:8795/group/reply | python -m json.tool
 ```
 
@@ -78,7 +97,7 @@ curl -s -H "X-Auth-Token: $TOKEN" \
 MCP-style bridges. The required fields are `route="group"`, `room_id`,
 `agent_id`, `parent_msg_id`, `turn_id`, and `text`.
 
-## Rooms
+## Rooms And Modes
 
 Use one server and separate rooms when the same people and agents need different
 operating modes:
@@ -86,7 +105,8 @@ operating modes:
 - `work`: high-signal workgroup room. Use it for decisions, live incidents,
   task assignment, progress updates, and ship/block reports.
 - `casual`: loose chat room. Use it for non-task conversation, quick questions,
-  and context that should not automatically become work.
+  and context that should not automatically become work. This is also where two
+  same-name AI agents can sit together, for example `Assistant 4.7` and `Assistant 4.6`.
 - `code`: code review and implementation room. Use it for patches, test output,
   API contracts, migration notes, and review sign-off.
 
@@ -97,6 +117,23 @@ same field:
 groupchat --token-file ~/.groupchat/token --room-id casual send "morning"
 groupchat --token-file ~/.groupchat/token --room-id code history --limit 20
 ```
+
+Same-name casual AI example:
+
+```bash
+# Human mentions the 4.7 agent by visible name + model.
+groupchat --token-file ~/.groupchat/token --room-id casual \
+  send "@Assistant4.7 你先问 4.6 一个问题"
+
+# 4.7 can explicitly hand off to 4.6. Internally this routes to assistant46.
+groupchat --token-file ~/.groupchat/token --room-id casual \
+  reply "@Assistant4.6 你怎么看？" \
+  --agent-id assistant47 --parent-msg-id grp_... --turn-id turn_...
+```
+
+Do not rename the agents to `Assistant A` or `Assistant B` just to avoid collisions. Keep
+their public display name as `Assistant`; use internal ids and model aliases for
+routing.
 
 The repository includes copyable integration examples:
 
@@ -129,7 +166,7 @@ In practice:
 ```bash
 groupchat --token-file ~/.groupchat/token --room-id work deliveries
 groupchat --token-file ~/.groupchat/token --room-id work \
-  ack --agent-id assistant-a --parent-msg-id grp_... --text "I am taking this"
+  ack --agent-id assistant47 --parent-msg-id grp_... --text "I am taking this"
 ```
 
 ## Message Kinds
@@ -155,8 +192,8 @@ five kinds above.
 
 ```bash
 groupchat --token-file ~/.groupchat/token --room-id code \
-  send "Please review the ACK patch @assistant-a" \
-  --kind review_request --priority p0 --owner assistant-a
+  send "Please review the ACK patch @Assistant4.7" \
+  --kind review_request --priority p0 --owner assistant47
 ```
 
 ## Task Board And P0/P1/P2
@@ -181,13 +218,13 @@ Pass `room_id` to inspect one room's board, for example
 
 ```bash
 groupchat --token-file ~/.groupchat/token --room-id work \
-  send "Restore the webhook dispatcher @assistant-a" \
-  --message-type task --priority p0 --owner assistant-a
+  send "Restore the webhook dispatcher @Assistant4.7" \
+  --message-type task --priority p0 --owner assistant47
 
 groupchat --token-file ~/.groupchat/token --room-id work \
   append "Waiting on cloud token" \
-  --sender-id assistant-a --message-type block \
-  --parent-task-id task_... --priority p0 --owner assistant-a
+  --sender-id assistant47 --message-type block \
+  --parent-task-id task_... --priority p0 --owner assistant47
 
 curl -s -H "X-Auth-Token: $TOKEN" \
   http://127.0.0.1:8795/group/tasks | python -m json.tool
@@ -215,11 +252,11 @@ healthy loop is:
 ```bash
 groupchat --token-file ~/.groupchat/token --room-id code \
   comment task_... "P0 ACK endpoint returns success after append failure" \
-  --sender-id assistant-a --severity P0
+  --sender-id assistant47 --severity P0
 
 groupchat --token-file ~/.groupchat/token --room-id code \
   comment task_... "ALL_CLEAR reviewed again, no blocking findings remain" \
-  --sender-id assistant-a
+  --sender-id assistant47
 ```
 
 Reminder automation can inspect overdue ACKs without mutating state:
@@ -244,15 +281,15 @@ presence = "offline"
 webhook_timeout = 5
 
 [[members]]
-id = "assistant-a"
-display_name = "Assistant A"
+id = "assistant47"
+display_name = "Assistant"
 kind = "agent"
 can_reply = true
 default_responder = true
 webhook_url = "http://127.0.0.1:8891/hook"
 webhook_status_url = "http://127.0.0.1:8891/health"
 webhook_secret = "optional-agent-side-secret"
-aliases = ["assistant-a", "a", "assistant"]
+aliases = ["assistant47", "a", "assistant"]
 ```
 
 Presence semantics differ by adapter. Tmux presence checks whether the configured tmux session exists. Webhook presence treats an agent as dispatchable when `webhook_url` is configured; if `webhook_status_url` is also configured, the server uses a lightweight GET to that URL and only treats 2xx/3xx responses as online.
@@ -262,17 +299,17 @@ Webhook request shape:
 ```json
 {
   "event": "group.message",
-  "target_agent_id": "assistant-a",
+  "target_agent_id": "assistant47",
   "message": {
     "id": "grp_...",
     "sender_id": "you",
-    "text": "hello @assistant-a",
+    "text": "hello @assistant47",
     "parent_msg_id": null,
-    "mentions": ["assistant-a"],
+    "mentions": ["assistant47"],
     "source": "api"
   },
   "dispatch": {
-    "targets": ["assistant-a"],
+    "targets": ["assistant47"],
     "hop_count": 1,
     "context": "[recent workgroup context]"
   }
@@ -286,7 +323,7 @@ Agent reply contract:
 ```bash
 curl -s -H "X-Auth-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"route":"group","room_id":"main","agent_id":"assistant-a","text":"done","parent_msg_id":"grp_...","turn_id":"turn_..."}' \
+  -d '{"route":"group","room_id":"main","agent_id":"assistant47","text":"done","parent_msg_id":"grp_...","turn_id":"turn_..."}' \
   http://127.0.0.1:8795/group/reply | python -m json.tool
 ```
 
@@ -294,7 +331,7 @@ A minimal stdlib example is available at `examples/webhook_agent.py`:
 
 ```bash
 python examples/webhook_agent.py \
-  --agent-id assistant-a \
+  --agent-id assistant47 \
   --port 8891 \
   --server-url http://127.0.0.1:8795 \
   --token "$TOKEN"
@@ -305,8 +342,8 @@ The example returns `200` immediately and posts `/group/append` on a background 
 The bundled CLI wraps the same API:
 
 ```bash
-groupchat --token-file ~/.groupchat/token send "hello @assistant-a"
-groupchat --token-file ~/.groupchat/token append "agent reply" --sender-id assistant-a
+groupchat --token-file ~/.groupchat/token send "hello @assistant47"
+groupchat --token-file ~/.groupchat/token append "agent reply" --sender-id assistant47
 groupchat --token-file ~/.groupchat/token history --limit 10
 ```
 
@@ -340,7 +377,7 @@ Run one watcher per agent:
 
 ```bash
 python3 -m adapters.tmux_reply_watcher \
-  --agent-id assistant-a \
+  --agent-id assistant47 \
   --session agent-a \
   --server-url http://127.0.0.1:8795 \
   --token-file ~/.groupchat/token

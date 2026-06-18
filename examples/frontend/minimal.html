@@ -53,7 +53,7 @@
     </div>
     <div>
       <label>Mentions</label>
-      <input id="mentions" placeholder="assistant-a,assistant-b">
+      <input id="mentions" placeholder="assistant47,assistant46">
     </div>
   </div>
 
@@ -62,10 +62,15 @@
   <button id="send">Send</button>
   <button id="refresh">Refresh</button>
 
+  <h2>Roster</h2>
+  <div id="roster"></div>
+
   <h2>History</h2>
   <div id="history"></div>
 
 <script>
+let rosterById = {};
+
 async function api(path, options = {}) {
   const server = document.querySelector("#server").value.replace(/\/$/, "");
   const token = document.querySelector("#token").value;
@@ -75,13 +80,34 @@ async function api(path, options = {}) {
   return res.json();
 }
 
+function labelFor(memberOrId) {
+  const member = typeof memberOrId === "string" ? rosterById[memberOrId] : memberOrId;
+  if (!member) return String(memberOrId || "?");
+  const name = member.display_name || member.id || "?";
+  const model = member.model ? ` ${member.model}` : "";
+  return `${name}${model}`;
+}
+
+async function refreshRoster() {
+  const data = await api("/group/roster");
+  const rows = data.roster || [];
+  rosterById = Object.fromEntries(rows.map((member) => [member.id, member]));
+  document.querySelector("#roster").innerHTML = rows.map((member) => `
+    <div class="msg">
+      <div><strong>${escapeHtml(labelFor(member))}</strong></div>
+      <div class="meta">id=${escapeHtml(member.id || "")} · kind=${escapeHtml(member.kind || "")}</div>
+    </div>
+  `).join("");
+}
+
 async function refresh() {
+  await refreshRoster();
   const room = encodeURIComponent(document.querySelector("#room").value);
   const data = await api(`/group/history?room_id=${room}&limit=50`);
   const rows = data.records || data.messages || [];
   document.querySelector("#history").innerHTML = rows.map((msg) => `
     <div class="msg">
-      <div class="meta">${msg.ts || ""} · ${msg.sender_id || "?"} · ${msg.message_type || "chat"} · ${msg.id}</div>
+      <div class="meta">${msg.ts || ""} · ${escapeHtml(labelFor(msg.sender_id))} · ${msg.message_type || "chat"} · ${msg.id}</div>
       <div>${escapeHtml(msg.text || "")}</div>
     </div>
   `).join("");

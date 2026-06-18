@@ -140,11 +140,16 @@ def normalize_member(member: dict[str, Any]) -> dict[str, Any]:
 
 def default_aliases(members: list[dict[str, Any]]) -> dict[str, str]:
     aliases = {"all": "__all__", "__all__": "__all__", "everyone": "__all__", "team": "__all__"}
+    display_name_counts: dict[str, int] = {}
+    for member in members:
+        display_name = str(member.get("display_name") or "").strip().lower()
+        if display_name:
+            display_name_counts[display_name] = display_name_counts.get(display_name, 0) + 1
     for member in members:
         member_id = str(member["id"])
         aliases[member_id.lower()] = member_id
         display_name = str(member.get("display_name") or "").strip()
-        if display_name:
+        if display_name and display_name_counts.get(display_name.lower(), 0) == 1:
             aliases[display_name.lower()] = member_id
         for alias in member.get("aliases") or []:
             aliases[str(alias).strip().lower()] = member_id

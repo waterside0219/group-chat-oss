@@ -49,7 +49,7 @@ Run from the repository root:
 
 ```bash
 grep -RInE --exclude-dir=.git --exclude-dir=__pycache__ \
-  'Bearer [A-Za-z0-9._-]+|sk-[A-Za-z0-9]|BEGIN (RSA|OPENSSH|PRIVATE) KEY' .
+  '(authorization token pattern)|(API key prefix)|(private key block marker)' .
 
 grep -RInE --exclude-dir=.git --exclude-dir=__pycache__ \
   '([0-9]{1,3}\.){3}[0-9]{1,3}|@[A-Za-z0-9._%+-]+\\.[A-Za-z]{2,}' .

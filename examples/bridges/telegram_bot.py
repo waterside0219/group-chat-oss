@@ -8,11 +8,11 @@ Environment:
   GROUPCHAT_ROOM_ID=casual
 
 Commands in Telegram:
-  /work message @assistant-a
-  /code review this @assistant-a
-  /task fix deploy @assistant-a
-  /review inspect patch @assistant-a
-  /question what is current status @assistant-a
+  /work message @assistant47
+  /code review this @assistant47
+  /task fix deploy @assistant47
+  /review inspect patch @assistant47
+  /question what is current status @assistant47
   /broadcast release is live
 """
 from __future__ import annotations

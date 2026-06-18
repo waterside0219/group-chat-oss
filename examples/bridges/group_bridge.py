@@ -82,7 +82,7 @@ def main() -> int:
 
     send = sub.add_parser("send", help="send a message")
     send.add_argument("text")
-    send.add_argument("--mentions", default="", help="comma-separated agent ids, e.g. assistant-a,assistant-b")
+    send.add_argument("--mentions", default="", help="comma-separated agent ids, e.g. assistant47,assistant46")
     send.add_argument("--sender-id", default="you")
     send.add_argument("--kind", "--message-type", dest="message_type", default="chat", choices=MESSAGE_TYPE_CHOICES)
     send.add_argument("--task-id", default="")
